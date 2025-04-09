@@ -5,8 +5,12 @@ import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter/services.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized(); // Add this line
   runApp(MyApp());
 }
 
@@ -36,6 +40,39 @@ class _MicScreenState extends State<MicScreen> {
   bool _hasDetectedSpeech = false;
   static const double SPEECH_START_THRESHOLD = 5.0; // Amplitude change to detect speech
   static const double MIN_AMPLITUDE = -28.0; // Minimum amplitude threshold
+
+  Position? _currentPosition;
+  String _country = "Unknown";
+  String _locationStatus = "Location not determined";
+
+  @override
+  void initState() {
+    super.initState();
+    // Request location permission and get location immediately when app starts
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeLocation();
+    });
+  }
+
+  Future<void> _initializeLocation() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => _locationStatus = 'Location permissions are denied');
+        return;
+      }
+    }
+    
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _locationStatus = 'Location permissions are permanently denied');
+      return;
+    }
+
+    // Get location after permissions are granted
+    await _getCurrentLocation();
+  }
 
   Future<String> _getTempFilePath() async {
     final dir = await getTemporaryDirectory();
@@ -103,22 +140,83 @@ class _MicScreenState extends State<MicScreen> {
 
   Future<void> _uploadAudio(File file) async {
     try {
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse('http://192.168.51.204:8000/transcribe/'), // Adjust IP if needed
-      );
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
-      final response = await request.send();
+      if (_currentPosition != null) {
+        final request = http.MultipartRequest(
+          'POST',
+          Uri.parse('http://192.168.51.204:8000/transcribe/'),
+        );
+        request.files.add(await http.MultipartFile.fromPath('file', file.path));
+        request.fields['latitude'] = _currentPosition!.latitude.toString();
+        request.fields['longitude'] = _currentPosition!.longitude.toString();
+        request.fields['country'] = _country;
 
-      if (response.statusCode == 200) {
-        final text = await response.stream.bytesToString();
-        setState(() => _transcription = text);
-      } else {
-        setState(() => _transcription = "Failed: ${response.statusCode}");
+        final response = await request.send();
+
+        if (response.statusCode == 200) {
+          final text = await response.stream.bytesToString();
+          setState(() => _transcription = text);
+        } else {
+          setState(() => _transcription = "Failed: ${response.statusCode}");
+        }
       }
     } catch (e) {
       setState(() => _transcription = "Error: $e");
     }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    final hasPermission = await _handleLocationPermission();
+    if (!hasPermission) return;
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high
+      );
+      
+      // Get address from coordinates
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+        setState(() {
+          _currentPosition = position;
+          _country = place.country ?? "Unknown";
+          _locationStatus = 'Location: ${position.latitude}, ${position.longitude}\nCountry: $_country';
+        });
+      }
+    } catch (e) {
+      setState(() => _locationStatus = 'Error getting location: $e');
+    }
+  }
+
+  Future<bool> _handleLocationPermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _locationStatus = 'Location services are disabled.');
+      return false;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => _locationStatus = 'Location permissions are denied.');
+        return false;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _locationStatus = 'Location permissions are permanently denied.');
+      return false;
+    }
+
+    return true;
   }
 
   @override
@@ -161,6 +259,22 @@ class _MicScreenState extends State<MicScreen> {
             ),
             const SizedBox(height: 10),
             Expanded(child: SingleChildScrollView(child: Text(_transcription))),
+            const SizedBox(height: 20),
+            Text(
+              "Location Status:",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Column(
+              children: [
+                Text(_locationStatus),
+                const SizedBox(height: 10),
+                ElevatedButton(
+                  onPressed: _getCurrentLocation,
+                  child: Text('Refresh Location'),
+                ),
+              ],
+            ),
           ],
         ),
       ),

@@ -20,7 +20,12 @@ app.add_middleware(
 model = whisper.load_model("base", device="cuda" if torch.cuda.is_available() else "cpu", download_root="models")
 
 @app.post("/transcribe/")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    latitude: float = None,
+    longitude: float = None,
+    country: str = None
+):
     try:
         # Save uploaded file to temp directory
         with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as temp_file:
@@ -34,7 +39,16 @@ async def transcribe_audio(file: UploadFile = File(...)):
         # Clean up temp file
         os.unlink(temp_path)
         
-        return result["text"]
+        response = {
+            "text": result["text"],
+            "location": {
+                "latitude": latitude,
+                "longitude": longitude,
+                "country": country
+            } if latitude and longitude else None
+        }
+        
+        return response
     except Exception as e:
         return {"error": str(e)}
 

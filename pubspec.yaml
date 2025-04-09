@@ -15,9 +15,11 @@ dependencies:
   file_picker: ^6.1.1   # For picking audio file
   cupertino_icons: ^1.0.8
   record: ^6.0.0
-  path_provider: ^2.1.2  # Optional: for saving to temp directory
+  path_provider: ^2.1.1  # Optional: for saving to temp directory
   path: ^1.9.0           # To handle file paths
-
+  geolocator: ^10.1.0
+  geocoding: ^2.1.1
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter
