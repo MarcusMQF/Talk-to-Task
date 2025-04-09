@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
-import 'package:provider/provider.dart';
 
 class AIChatScreen extends StatefulWidget {
   const AIChatScreen({super.key});
@@ -14,12 +14,38 @@ class _AIChatScreenState extends State<AIChatScreen> {
   final TextEditingController _chatController = TextEditingController();
   final List<Map<String, String>> _messages = [
     {'sender': 'ai', 'message': 'What can I help you today?'},
-    {'sender': 'driver', 'message': 'Accept the upcoming request.'},
+  {'sender': 'driver', 'message': 'Accept the upcoming request.'},
     {'sender': 'ai', 'message': 'Accepted the ride, would you like me to message them you’re on your way?'},
     {'sender': 'driver', 'message': 'Yes.'},
     {'sender': 'ai', 'message': 'Message sent!'},
   ]; // Predefined messages for the demo
 
+bool _isListening = false; // Indicator for listening state
+  bool _isProcessing = false; // Indicator for processing state
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Set up the callback to handle recognized text
+    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
+    voiceProvider.setCommandCallback((recognizedText) {
+      setState(() {
+        _isProcessing = false; // Stop processing indicator
+        _chatController.text = recognizedText; // Add recognized text to the chat box
+        _sendMessage(recognizedText); // Automatically send the message
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    // Remove the callback when the screen is disposed
+    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
+    voiceProvider.removeCommandCallback();
+    super.dispose();
+  }
+  
   void _sendMessage(String message) {
     if (message.trim().isEmpty) return;
 
@@ -84,6 +110,24 @@ class _AIChatScreenState extends State<AIChatScreen> {
             ),
           ),
 
+          // Listening and Processing Indicators
+          if (_isListening)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text(
+                'Listening...',
+                style: TextStyle(color: AppTheme.grabGreen, fontSize: 16),
+              ),
+            ),
+          if (_isProcessing)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text(
+                'Processing audio...',
+                style: TextStyle(color: AppTheme.grabGreen, fontSize: 16),
+              ),
+            ),
+
           // Input box and bottom navigation
           Column(
             children: [
@@ -144,8 +188,15 @@ class _AIChatScreenState extends State<AIChatScreen> {
                         final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
                         if (voiceProvider.isListening) {
                           voiceProvider.stopListening();
+                          setState(() {
+                            _isListening = false; // Stop listening indicator
+                          });
                         } else {
                           voiceProvider.startListening();
+                          setState(() {
+                            _isListening = true; // Show listening indicator
+                            _isProcessing = true; // Show processing indicator
+                          });
                         }
                       },
                     ),
