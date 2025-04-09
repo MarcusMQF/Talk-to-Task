@@ -27,6 +27,12 @@ class _MicScreenState extends State<MicScreen> {
   bool _isRecording = false;
   String _transcription = "Press the mic to start speaking.";
   Timer? _silenceTimer;
+  double _lastAmplitude = -60.0; // Initial value
+  static const double SILENCE_THRESHOLD = 30.0; // 30% change threshold
+  int _silenceCount = 0;
+  static const int SILENCE_DURATION = 12; // Number of consecutive silent samples needed
+  bool _hasDetectedSpeech = false;
+  static const double SPEECH_START_THRESHOLD = 50.0; // Threshold to detect start of speech
 
   Future<String> _getTempFilePath() async {
     final dir = await getTemporaryDirectory();
@@ -38,21 +44,37 @@ class _MicScreenState extends State<MicScreen> {
       final path = await _getTempFilePath();
       await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
       setState(() => _isRecording = true);
+      _silenceCount = 0;
+      _hasDetectedSpeech = false; // Reset speech detection flag
 
-      // Monitor audio levels for silence detection
       _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amplitude) {
-        debugPrint("Amplitude: ${amplitude.current}"); // Debug log to check amplitude values
+        double currentAmp = amplitude.current;
+        
+        // Calculate percentage change
+        double percentageChange = ((currentAmp - _lastAmplitude) / _lastAmplitude).abs() * 100;
+        debugPrint("Change: $percentageChange%, Speech Detected: $_hasDetectedSpeech"); // Debug log
 
-        if (amplitude.current >= -25 && amplitude.current <= -20) { // Adjusted threshold for silence
-          // If silence is detected, start a timer
-          _silenceTimer?.cancel();
-          _silenceTimer = Timer(const Duration(milliseconds: 500), () { // Increased duration for better detection
-            _stopAndSendRecording();
-          });
-        } else {
-          // Reset the timer if sound is detected
-          _silenceTimer?.cancel();
+        // Detect start of speech
+        if (!_hasDetectedSpeech && percentageChange > SPEECH_START_THRESHOLD) {
+          _hasDetectedSpeech = true;
+          debugPrint("Speech started!"); // Debug log
         }
+
+        // Only check for silence after speech has been detected
+        if (_hasDetectedSpeech) {
+          if (percentageChange < SILENCE_THRESHOLD) {
+            _silenceCount++;
+            debugPrint("Silence count: $_silenceCount"); // Debug log
+            if (_silenceCount >= SILENCE_DURATION) {
+              _stopAndSendRecording();
+              _silenceCount = 0;
+            }
+          } else {
+            _silenceCount = 0;
+          }
+        }
+
+        _lastAmplitude = currentAmp;
       });
     } else {
       setState(() => _transcription = "Mic permission not granted.");
