@@ -163,9 +163,9 @@ bool _isListening = false; // Indicator for listening state
                     // Send button
                     GestureDetector(
                       onTap: () => _sendMessage(_chatController.text),
-                      child: CircleAvatar(
+                      child: const CircleAvatar(
                         backgroundColor: AppTheme.grabGreen,
-                        child: const Icon(Icons.send, color: Colors.white),
+                        child: Icon(Icons.send, color: Colors.white),
                       ),
                     ),
                   ],
