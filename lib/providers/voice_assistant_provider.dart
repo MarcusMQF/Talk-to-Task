@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import '../services/speech_service.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import '../screens/ai_chat_screen.dart';
 
 enum VoiceAssistantState {
   idle,
@@ -167,6 +168,10 @@ class VoiceAssistantProvider extends ChangeNotifier {
         case 'help':
           response = 'Getting help from Grab support.';
           break;
+          case 'open_ai': // Handle the "open AI" command
+        response = 'Opening AI Chat.';
+        _navigateToAIChatScreen(); // Navigate to AI Chat Screen
+        break;
       }
     } else {
       response = 'Sorry, I didn\'t understand that command.';
@@ -253,4 +258,11 @@ class VoiceAssistantProvider extends ChangeNotifier {
     _tts.stop();
     super.dispose();
   }
+
+  void _navigateToAIChatScreen() {
+  final navigatorKey = GlobalKey<NavigatorState>();
+  navigatorKey.currentState?.push(
+    MaterialPageRoute(builder: (context) => const AIChatScreen()),
+  );
+}
 } 

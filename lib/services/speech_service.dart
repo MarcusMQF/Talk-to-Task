@@ -24,7 +24,7 @@ class SpeechService {
   // State tracking
   SpeechServiceState _state = SpeechServiceState.initialized;
   String _lastRecognizedWords = '';
-  String _errorMessage = '';
+  final String _errorMessage = '';
   
   // Callbacks
   VoidCallback? onListeningStarted;

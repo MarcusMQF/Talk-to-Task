@@ -66,8 +66,8 @@ class _HomeScreenState extends State<HomeScreen> {
             _isOnline = true;
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('You are now online'),
+            const SnackBar(
+              content: Text('You are now online'),
               backgroundColor: AppTheme.grabGreen,
             ),
           );
@@ -161,31 +161,31 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             ListTile(
-              leading: Icon(Icons.directions_car, color: AppTheme.grabGreen),
+              leading: const Icon(Icons.directions_car, color: AppTheme.grabGreen),
               title: const Text('My Vehicles'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {},
             ),
             ListTile(
-              leading: Icon(Icons.history, color: AppTheme.grabGreen),
+              leading: const Icon(Icons.history, color: AppTheme.grabGreen),
               title: const Text('Trip History'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {},
             ),
             ListTile(
-              leading: Icon(Icons.attach_money, color: AppTheme.grabGreen),
+              leading: const Icon(Icons.attach_money, color: AppTheme.grabGreen),
               title: const Text('Earnings'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {},
             ),
             ListTile(
-              leading: Icon(Icons.message, color: AppTheme.grabGreen),
+              leading: const Icon(Icons.message, color: AppTheme.grabGreen),
               title: const Text('Messages'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {},
             ),
             ListTile(
-              leading: Icon(Icons.location_on, color: AppTheme.grabGreen),
+              leading: const Icon(Icons.location_on, color: AppTheme.grabGreen),
               title: const Text('Saved Places'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {},
@@ -400,10 +400,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             
             // Floating Voice Assistant Button
-            Positioned(
+            const Positioned(
               right: 16,
               bottom: 16,
-              child: const VoiceButton(
+              child: VoiceButton(
                 size: 60,
               ),
             ),
@@ -503,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 8),
           Text(
             amount,
-            style: TextStyle(
+            style: const TextStyle(
               color: AppTheme.grabGreen,
               fontWeight: FontWeight.bold,
               fontSize: 14,
