@@ -27,12 +27,15 @@ class _MicScreenState extends State<MicScreen> {
   bool _isRecording = false;
   String _transcription = "Press the mic to start speaking.";
   Timer? _silenceTimer;
-  double _lastAmplitude = -60.0; // Initial value
-  static const double SILENCE_THRESHOLD = 30.0; // 30% change threshold
+  double _lastAmplitude = -25.0; // Initial value
+  static const double SILENCE_THRESHOLD = 3.0; // Small changes indicate silence
   int _silenceCount = 0;
-  static const int SILENCE_DURATION = 12; // Number of consecutive silent samples needed
+  static const int INITIAL_SILENCE_DURATION = 100;  // Before speech detection
+  static const int AFTER_SPEECH_SILENCE_DURATION = 10;  // After speech detection
+  int _silenceDuration = INITIAL_SILENCE_DURATION;  // Dynamic silence duration
   bool _hasDetectedSpeech = false;
-  static const double SPEECH_START_THRESHOLD = 50.0; // Threshold to detect start of speech
+  static const double SPEECH_START_THRESHOLD = 5.0; // Amplitude change to detect speech
+  static const double MIN_AMPLITUDE = -28.0; // Minimum amplitude threshold
 
   Future<String> _getTempFilePath() async {
     final dir = await getTemporaryDirectory();
@@ -45,39 +48,43 @@ class _MicScreenState extends State<MicScreen> {
       await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
       setState(() => _isRecording = true);
       _silenceCount = 0;
-      _hasDetectedSpeech = false; // Reset speech detection flag
+      _hasDetectedSpeech = false;
+      _silenceDuration = INITIAL_SILENCE_DURATION;
 
       _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amplitude) {
         double currentAmp = amplitude.current;
-        
-        // Calculate percentage change
-        double percentageChange = ((currentAmp - _lastAmplitude) / _lastAmplitude).abs() * 100;
-        debugPrint("Change: $percentageChange%, Speech Detected: $_hasDetectedSpeech"); // Debug log
+        double amplitudeChange = (currentAmp - _lastAmplitude).abs();
 
-        // Detect start of speech
-        if (!_hasDetectedSpeech && percentageChange > SPEECH_START_THRESHOLD) {
-          _hasDetectedSpeech = true;
-          debugPrint("Speech started!"); // Debug log
+        // Skip if amplitude change is infinite or amplitude is too low
+        if (amplitudeChange.isInfinite || currentAmp < MIN_AMPLITUDE) {
+          debugPrint("Skipping: ${amplitudeChange.isInfinite ? 'Infinite change' : 'Too low amplitude'}"); 
+          _lastAmplitude = currentAmp;
+          return;
         }
 
-        // Only check for silence after speech has been detected
-        if (_hasDetectedSpeech) {
-          if (percentageChange < SILENCE_THRESHOLD) {
-            _silenceCount++;
-            debugPrint("Silence count: $_silenceCount"); // Debug log
-            if (_silenceCount >= SILENCE_DURATION) {
-              _stopAndSendRecording();
-              _silenceCount = 0;
-            }
-          } else {
-            _silenceCount = 0;
+        debugPrint("Current: $currentAmp, Change: $amplitudeChange, Required silence: $_silenceDuration");
+
+        // Wait for a significant amplitude change to start monitoring
+        if (!_hasDetectedSpeech) {
+          if (amplitudeChange > SPEECH_START_THRESHOLD) {
+            _hasDetectedSpeech = true;
+            _silenceDuration = AFTER_SPEECH_SILENCE_DURATION;
+            debugPrint("Speech started! Change: $amplitudeChange");
           }
+        }
+        // Only count silence after speech has been detected
+        else if (amplitudeChange < SILENCE_THRESHOLD) {
+          _silenceCount++;
+          debugPrint("Silence detected: $_silenceCount / $_silenceDuration");
+          if (_silenceCount >= _silenceDuration) {
+            _stopAndSendRecording();
+          }
+        } else {
+          _silenceCount = 0;
         }
 
         _lastAmplitude = currentAmp;
       });
-    } else {
-      setState(() => _transcription = "Mic permission not granted.");
     }
   }
 
