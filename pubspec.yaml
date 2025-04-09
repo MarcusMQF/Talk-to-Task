@@ -21,6 +21,7 @@ dependencies:
   google_maps_flutter: ^2.12.1
   flutter_dotenv: ^5.1.0
   draggable_fab: ^0.1.4
+  google_generative_ai: ^0.2.2
 
 dev_dependencies:
   flutter_test:

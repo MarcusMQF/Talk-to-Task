@@ -1,0 +1,12 @@
+# Text-to-Speech Libraries
+gTTS==2.5.1  # Google Text-to-Speech (online)
+pyttsx3==2.90  # Offline Text-to-Speech
+
+# Language Detection
+langdetect==1.0.9  # Language detection with fallback
+
+# System Dependencies
+# Note: These are system-level dependencies that might need to be installed separately
+# For Linux: mpg321 (sudo apt-get install mpg321)
+# For Windows: Built-in media player is used
+# For macOS: Built-in afplay is used 

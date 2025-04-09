@@ -66,8 +66,8 @@ class _HomeScreenState extends State<HomeScreen> {
             _isOnline = true;
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('You are now online'),
+            const SnackBar(
+              content: Text('You are now online'),
               backgroundColor: AppTheme.grabGreen,
             ),
           );
@@ -400,10 +400,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             
             // Floating Voice Assistant Button
-            Positioned(
+            const Positioned(
               right: 16,
               bottom: 16,
-              child: const VoiceButton(
+              child: VoiceButton(
                 size: 60,
               ),
             ),
@@ -503,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 8),
           Text(
             amount,
-            style: TextStyle(
+            style: const TextStyle(
               color: AppTheme.grabGreen,
               fontWeight: FontWeight.bold,
               fontSize: 14,
