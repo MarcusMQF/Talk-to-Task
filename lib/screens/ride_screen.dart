@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/physics.dart';
 import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
+import '../screens/ai_chat_screen.dart';
 
 class RideScreen extends StatefulWidget {
   const RideScreen({super.key});
@@ -767,7 +768,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
-                              SizedBox(height:11),
+                              const SizedBox(height:11),
                               Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
@@ -1042,7 +1043,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: const EdgeInsets.all(8),
-                  child: Icon(Icons.my_location, color: AppTheme.grabGreen, size: 20),
+                  child: const Icon(Icons.my_location, color: AppTheme.grabGreen, size: 20),
                 ),
               ),
             ),
@@ -1077,7 +1078,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     ),
                     child: Container(
                       padding: const EdgeInsets.all(8),
-                      child: Icon(Icons.add, color: AppTheme.grabGreen, size: 20),
+                      child: const Icon(Icons.add, color: AppTheme.grabGreen, size: 20),
                     ),
                   ),
                 ),
@@ -1101,7 +1102,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     ),
                     child: Container(
                       padding: const EdgeInsets.all(8),
-                      child: Icon(Icons.remove, color: AppTheme.grabGreen, size: 20),
+                      child: const Icon(Icons.remove, color: AppTheme.grabGreen, size: 20),
                     ),
                   ),
                 ),
@@ -1137,6 +1138,22 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           if (_isOnline) _buildRequestCard(),
           _buildMapControls(),
           _buildDraggableVoiceButton(),
+
+          // Add the button to navigate to AI Chat Screen
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: FloatingActionButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AIChatScreen()),
+                );
+              },
+              backgroundColor: AppTheme.grabGreen,
+              child: const Icon(Icons.chat, color: Colors.white),
+            ),
+          ),
         ],
       ),
     );
@@ -1236,12 +1253,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Call Passenger'),
-        content: Text('Calling Ahmad...'),
+        title: const Text('Call Passenger'),
+        content: const Text('Calling Ahmad...'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('CANCEL'),
+            child: const Text('CANCEL'),
           ),
         ],
       ),
@@ -1252,19 +1269,19 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Cancel Ride?'),
-        content: Text('Are you sure you want to cancel this ride? This may affect your cancellation rate.'),
+        title: const Text('Cancel Ride?'),
+        content: const Text('Are you sure you want to cancel this ride? This may affect your cancellation rate.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('NO'),
+            child: const Text('NO'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('YES'),
+            child: const Text('YES'),
           ),
         ],
       ),
     );
   }
-} 
+}

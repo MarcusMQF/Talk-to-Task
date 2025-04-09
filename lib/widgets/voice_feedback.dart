@@ -128,7 +128,7 @@ class VoiceFeedback extends StatelessWidget {
       child: Row(
         children: [
           if (isSpeaking)
-            Icon(
+            const Icon(
               Icons.volume_up,
               color: AppTheme.grabGreen,
               size: 24,
@@ -179,7 +179,7 @@ class VoiceFeedback extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(
+          const Icon(
             Icons.error_outline,
             color: AppTheme.errorRed,
             size: 20,
