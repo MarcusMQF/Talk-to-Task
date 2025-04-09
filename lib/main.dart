@@ -33,31 +33,31 @@ class _MicScreenState extends State<MicScreen> {
     return p.join(dir.path, 'recorded_audio.m4a');
   }
 
-Future<void> _startRecording() async {
-  if (await _recorder.hasPermission()) {
-    final path = await _getTempFilePath();
-    await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
-    setState(() => _isRecording = true);
+  Future<void> _startRecording() async {
+    if (await _recorder.hasPermission()) {
+      final path = await _getTempFilePath();
+      await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+      setState(() => _isRecording = true);
 
-    // Monitor audio levels for silence detection
-    _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amplitude) {
-      debugPrint("Amplitude: ${amplitude.current}"); // Debug log to check amplitude values
+      // Monitor audio levels for silence detection
+      _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amplitude) {
+        debugPrint("Amplitude: ${amplitude.current}"); // Debug log to check amplitude values
 
-      if (amplitude.current <= 0.1) { // Lower threshold for silence
-        // If silence is detected, start a timer
-        _silenceTimer?.cancel();
-        _silenceTimer = Timer(const Duration(milliseconds: 700), () {
-          _stopAndSendRecording();
-        });
-      } else {
-        // Reset the timer if sound is detected
-        _silenceTimer?.cancel();
-      }
-    });
-  } else {
-    setState(() => _transcription = "Mic permission not granted.");
+        if (amplitude.current >= -25 && amplitude.current <= -20) { // Adjusted threshold for silence
+          // If silence is detected, start a timer
+          _silenceTimer?.cancel();
+          _silenceTimer = Timer(const Duration(milliseconds: 500), () { // Increased duration for better detection
+            _stopAndSendRecording();
+          });
+        } else {
+          // Reset the timer if sound is detected
+          _silenceTimer?.cancel();
+        }
+      });
+    } else {
+      setState(() => _transcription = "Mic permission not granted.");
+    }
   }
-}
 
   Future<void> _stopAndSendRecording() async {
     _silenceTimer?.cancel();
