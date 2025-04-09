@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
+import '../screens/ride_screen.dart';
 
 class AIChatScreen extends StatefulWidget {
   const AIChatScreen({super.key});
@@ -45,7 +46,7 @@ bool _isListening = false; // Indicator for listening state
     voiceProvider.removeCommandCallback();
     super.dispose();
   }
-  
+
   void _sendMessage(String message) {
     if (message.trim().isEmpty) return;
 
@@ -202,7 +203,12 @@ bool _isListening = false; // Indicator for listening state
                     ),
                     IconButton(
                       icon: const Icon(Icons.map, color: AppTheme.grabGrayDark),
-                      onPressed: () {},
+                      onPressed: () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (context) => const RideScreen()),
+                        );
+                      },
                     ),
                   ],
                 ),
