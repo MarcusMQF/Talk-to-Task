@@ -81,5 +81,11 @@ class VoiceCommands {
       examples: ['Go online', 'Start receiving rides'],
       triggers: ['online', 'start', 'active', 'available'],
     ),
+    VoiceCommand(
+      command: 'open_ai',
+      description: 'Open the AI Chat screen',
+      examples: ['Open AI chat', 'Start AI chat', 'Chat with AI'],
+      triggers: ['open ai', 'ai chat', 'chat with ai'],
+    ),
   ];
-} 
+}

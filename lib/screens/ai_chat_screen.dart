@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import '../constants/app_theme.dart';
-import '../providers/voice_assistant_provider.dart';
 
 class AIChatScreen extends StatefulWidget {
   const AIChatScreen({super.key});
@@ -12,7 +10,13 @@ class AIChatScreen extends StatefulWidget {
 
 class _AIChatScreenState extends State<AIChatScreen> {
   final TextEditingController _chatController = TextEditingController();
-  final List<Map<String, String>> _messages = []; // Stores messages with sender info
+  final List<Map<String, String>> _messages = [
+    {'sender': 'ai', 'message': 'What can I help you today?'},
+    {'sender': 'driver', 'message': 'Accept the upcoming request.'},
+    {'sender': 'ai', 'message': 'Accepted the ride, would you like me to message them you’re on your way?'},
+    {'sender': 'driver', 'message': 'Yes.'},
+    {'sender': 'ai', 'message': 'Message sent!'},
+  ]; // Predefined messages for the demo
 
   void _sendMessage(String message) {
     if (message.trim().isEmpty) return;
@@ -35,9 +39,10 @@ class _AIChatScreenState extends State<AIChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AI Assistant Chat'),
-        backgroundColor: AppTheme.grabGreen,
-        foregroundColor: Colors.white,
+        title: const Text('Grab Assistant'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
       ),
       body: Column(
         children: [
@@ -53,7 +58,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
                 return Align(
                   alignment: isDriver ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4.0),
+                    margin: const EdgeInsets.symmetric(vertical: 8.0),
                     padding: const EdgeInsets.all(12.0),
                     decoration: BoxDecoration(
                       color: isDriver ? AppTheme.grabGreen : AppTheme.grabGrayDark,
@@ -77,54 +82,68 @@ class _AIChatScreenState extends State<AIChatScreen> {
             ),
           ),
 
-          // Input box
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                // Text input
-                Expanded(
-                  child: TextField(
-                    controller: _chatController,
-                    decoration: InputDecoration(
-                      hintText: 'Type your message...',
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: BorderSide.none,
+          // Input box and bottom navigation
+          Column(
+            children: [
+              // Input box
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(
+                  children: [
+                    // Text input
+                    Expanded(
+                      child: TextField(
+                        controller: _chatController,
+                        decoration: InputDecoration(
+                          hintText: 'Type your message...',
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
-                  ),
+
+                    const SizedBox(width: 8),
+
+                    // Send button
+                    GestureDetector(
+                      onTap: () => _sendMessage(_chatController.text),
+                      child: CircleAvatar(
+                        backgroundColor: AppTheme.grabGreen,
+                        child: const Icon(Icons.send, color: Colors.white),
+                      ),
+                    ),
+                  ],
                 ),
+              ),
 
-                const SizedBox(width: 8),
-
-                // Microphone button
-                GestureDetector(
-                  onTap: () {
-                    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-                    voiceProvider.startListening();
-                  },
-                  child: CircleAvatar(
-                    backgroundColor: AppTheme.grabGreen,
-                    child: const Icon(Icons.mic, color: Colors.white),
-                  ),
+              // Bottom navigation bar
+              Container(
+                color: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.menu, color: AppTheme.grabGrayDark),
+                      onPressed: () {},
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.mic, color: AppTheme.grabGreen),
+                      onPressed: () {},
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.map, color: AppTheme.grabGrayDark),
+                      onPressed: () {},
+                    ),
+                  ],
                 ),
-
-                const SizedBox(width: 8),
-
-                // Send button
-                GestureDetector(
-                  onTap: () => _sendMessage(_chatController.text),
-                  child: CircleAvatar(
-                    backgroundColor: AppTheme.grabGreen,
-                    child: const Icon(Icons.send, color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
