@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/physics.dart';
 import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
+import '../screens/ai_chat_screen.dart';
 
 class RideScreen extends StatefulWidget {
   const RideScreen({super.key});
@@ -1137,6 +1138,22 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           if (_isOnline) _buildRequestCard(),
           _buildMapControls(),
           _buildDraggableVoiceButton(),
+
+          // Add the button to navigate to AI Chat Screen
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: FloatingActionButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AIChatScreen()),
+                );
+              },
+              backgroundColor: AppTheme.grabGreen,
+              child: const Icon(Icons.chat, color: Colors.white),
+            ),
+          ),
         ],
       ),
     );
@@ -1267,4 +1284,4 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       ),
     );
   }
-} 
+}
