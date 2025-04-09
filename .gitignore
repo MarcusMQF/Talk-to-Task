@@ -44,3 +44,4 @@ app.*.map.json
 
 /backend/whisper/
 /backend/models/
+/backend/models/huggingface/
