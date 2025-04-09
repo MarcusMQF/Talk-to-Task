@@ -138,16 +138,14 @@ class AppTheme {
     ),
     
     // Color scheme
-    colorScheme: ColorScheme.light(
+    colorScheme: const ColorScheme.light(
       primary: grabGreen,
       secondary: grabGreenLight,
       tertiary: grabGreenDark,
       error: errorRed,
-      background: grabGray,
       surface: Colors.white,
       onPrimary: Colors.white,
       onSecondary: Colors.white,
-      onBackground: grabBlack,
       onSurface: grabBlack,
       onError: Colors.white,
     ),
@@ -243,16 +241,14 @@ class AppTheme {
     ),
     
     // Color scheme
-    colorScheme: ColorScheme.dark(
+    colorScheme: const ColorScheme.dark(
       primary: grabGreen,
       secondary: grabGreenLight,
       tertiary: grabGreenDark,
       error: errorRed,
-      background: const Color(0xFF121212),
-      surface: const Color(0xFF252525),
+      surface: Color(0xFF252525),
       onPrimary: Colors.white,
       onSecondary: Colors.white,
-      onBackground: Colors.white,
       onSurface: Colors.white,
       onError: Colors.white,
     ),
