@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constants/app_theme.dart';
+import '../providers/voice_assistant_provider.dart';
+import 'package:provider/provider.dart';
 
 class AIChatScreen extends StatefulWidget {
   const AIChatScreen({super.key});
@@ -104,6 +106,10 @@ class _AIChatScreenState extends State<AIChatScreen> {
                           ),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         ),
+                        onSubmitted: (value) {
+                          _sendMessage(value); // Send the message when Enter is pressed
+                        },
+                        style: const TextStyle(fontSize: 16, color: AppTheme.grabBlack),                
                       ),
                     ),
 
@@ -134,7 +140,14 @@ class _AIChatScreenState extends State<AIChatScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.mic, color: AppTheme.grabGreen),
-                      onPressed: () {},
+                      onPressed: () {
+                        final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
+                        if (voiceProvider.isListening) {
+                          voiceProvider.stopListening();
+                        } else {
+                          voiceProvider.startListening();
+                        }
+                      },
                     ),
                     IconButton(
                       icon: const Icon(Icons.map, color: AppTheme.grabGrayDark),
