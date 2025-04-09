@@ -15,22 +15,25 @@ class _AIChatScreenState extends State<AIChatScreen> {
   final TextEditingController _chatController = TextEditingController();
   final List<Map<String, String>> _messages = [
     {'sender': 'ai', 'message': 'What can I help you today?'},
-  {'sender': 'driver', 'message': 'Accept the upcoming request.'},
-    {'sender': 'ai', 'message': 'Accepted the ride, would you like me to message them you’re on your way?'},
+    {'sender': 'driver', 'message': 'Accept the upcoming request.'},
+    {'sender': 'ai', 'message': 'Accepted the ride, would you like me to message them you\'re on your way?'},
     {'sender': 'driver', 'message': 'Yes.'},
     {'sender': 'ai', 'message': 'Message sent!'},
   ]; // Predefined messages for the demo
 
-bool _isListening = false; // Indicator for listening state
+  bool _isListening = false; // Indicator for listening state
   bool _isProcessing = false; // Indicator for processing state
+  late VoiceAssistantProvider _voiceProvider; // Store a reference to the provider
 
   @override
   void initState() {
     super.initState();
 
+    // Store a reference to the provider
+    _voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
+    
     // Set up the callback to handle recognized text
-    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-    voiceProvider.setCommandCallback((recognizedText) {
+    _voiceProvider.setCommandCallback((recognizedText) {
       setState(() {
         _isProcessing = false; // Stop processing indicator
         _chatController.text = recognizedText; // Add recognized text to the chat box
@@ -41,9 +44,9 @@ bool _isListening = false; // Indicator for listening state
 
   @override
   void dispose() {
-    // Remove the callback when the screen is disposed
-    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-    voiceProvider.removeCommandCallback();
+    // Use the stored reference instead of accessing Provider through context in dispose
+    _voiceProvider.removeCommandCallback();
+    _chatController.dispose(); // Also dispose the text controller
     super.dispose();
   }
 
@@ -186,14 +189,13 @@ bool _isListening = false; // Indicator for listening state
                     IconButton(
                       icon: const Icon(Icons.mic, color: AppTheme.grabGreen),
                       onPressed: () {
-                        final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-                        if (voiceProvider.isListening) {
-                          voiceProvider.stopListening();
+                        if (_voiceProvider.isListening) {
+                          _voiceProvider.stopListening();
                           setState(() {
                             _isListening = false; // Stop listening indicator
                           });
                         } else {
-                          voiceProvider.startListening();
+                          _voiceProvider.startListening();
                           setState(() {
                             _isListening = true; // Show listening indicator
                             _isProcessing = true; // Show processing indicator

@@ -16,10 +16,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _isOnline = true;
+  late VoiceAssistantProvider _voiceProvider; // Store a reference to the provider
   
   @override
   void initState() {
     super.initState();
+    
+    // Store reference to provider
+    _voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
     
     // Set up command handler after the first frame is rendered
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -29,16 +33,13 @@ class _HomeScreenState extends State<HomeScreen> {
   
   @override
   void dispose() {
-    // Remove command handler
-    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-    voiceProvider.removeCommandCallback();
+    // Remove command handler using stored reference
+    _voiceProvider.removeCommandCallback();
     super.dispose();
   }
   
   void _setupVoiceCommandHandler() {
-    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-    
-    voiceProvider.setCommandCallback((command) {
+    _voiceProvider.setCommandCallback((command) {
       switch (command) {
         case 'accept_ride':
           // Navigate to ride screen after a short delay

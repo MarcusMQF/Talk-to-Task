@@ -48,6 +48,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   late Animation<double> _timerShakeAnimation;
   late Animation<double> _timerGlowAnimation;
   
+  // Store provider reference for safe disposal
+  late VoiceAssistantProvider _voiceProvider;
+  
   @override
   void initState() {
     super.initState();
@@ -59,6 +62,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupVoiceCommandHandler();
     });
+    // Store provider reference for safe disposal
+    _voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
   }
   
   @override
@@ -70,8 +75,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _timerGlowController.dispose();
     _requestTimer?.cancel();
     _mapController?.dispose();
-    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-    voiceProvider.removeCommandCallback();
+    // Use stored reference instead of accessing through context
+    _voiceProvider.removeCommandCallback();
     super.dispose();
   }
   
@@ -1193,8 +1198,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             color: Colors.transparent,
             child: InkWell(
               onTap: () {
-                final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-                voiceProvider.startListening();
+                _voiceProvider.startListening();
               },
               customBorder: const CircleBorder(),
               child: const Center(
@@ -1213,9 +1217,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   
   // Set up voice command handler
   void _setupVoiceCommandHandler() {
-    final voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
-    
-    voiceProvider.setCommandCallback((command) {
+    _voiceProvider.setCommandCallback((command) {
       switch (command) {
         case 'navigate':
           setState(() {
