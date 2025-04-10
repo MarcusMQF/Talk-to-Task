@@ -149,85 +149,57 @@ class _MicScreenState extends State<MicScreen> {
 
   Future<void> _uploadAudio(File file) async {
     try {
-      debugPrint("Starting upload process..."); // Debug log
-      if (_currentPosition != null) {
-        final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
-        
-        // Debug log file details
-        debugPrint("File path: ${file.path}");
-        debugPrint("File exists: ${await file.exists()}");
-        debugPrint("File size: ${await file.length()} bytes");
+      debugPrint("\n=== Starting Upload Process ===");
+      
+      final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
+      
+      // Add file
+      final audioFile = await http.MultipartFile.fromPath(
+        'file', 
+        file.path,
+        contentType: MediaType('audio', 'm4a')
+      );
+      request.files.add(audioFile);
 
-        // Add file
-        final audioFile = await http.MultipartFile.fromPath(
-          'file', 
-          file.path,
-          contentType: MediaType('audio', 'm4a')
-        );
-        request.files.add(audioFile);
+      request.fields['country'] = _country;
 
-        // Add location data with null checks
-        request.fields.addAll({
-          'latitude': _currentPosition?.latitude.toString() ?? '',
-          'longitude': _currentPosition?.longitude.toString() ?? '',
-          'country': _country.isNotEmpty ? _country : 'Unknown',
-        });
-        debugPrint("Sending request with fields: ${request.fields}"); // Debug log
-
-        // Send request with detailed error handling
-        try {
-          debugPrint("Sending request to: $SERVER_URL"); // Debug log
-          final streamedResponse = await request.send().timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              debugPrint("Request timed out"); // Debug log
-              throw TimeoutException('Request timed out');
-            },
-          );
-
-          debugPrint("Got response with status: ${streamedResponse.statusCode}"); // Debug log
-          final response = await http.Response.fromStream(streamedResponse);
-          debugPrint("Response headers: ${response.headers}"); // Debug log
-          debugPrint("Response body: ${response.body}"); // Debug log
-
-          if (response.statusCode == 200) {
-            if (response.body.isNotEmpty) {
-              try {
-                final jsonResponse = json.decode(response.body);
-                debugPrint("Parsed JSON response: $jsonResponse"); // Debug log
-                setState(() {
-                  _baseTranscription = jsonResponse['base_model']?['text'] ?? "No base model transcription";
-                  _fineTunedTranscription = jsonResponse['fine_tuned_model']?['text'] ?? 
-                      "No fine-tuned model available for $_country";
-                  _transcription = "Base Model:\n$_baseTranscription\n\nFine-tuned Model:\n$_fineTunedTranscription";
-                });
-              } catch (e) {
-                debugPrint("JSON decode error: $e"); // Debug log
-                setState(() => _transcription = "Error decoding response: $e");
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      debugPrint("\nResponse details:");
+      debugPrint("Status code: ${response.statusCode}");
+      debugPrint("Response headers: ${response.headers}");
+      
+      if (response.statusCode == 200) {
+          // Decode response with UTF-8
+          final String decodedBody = utf8.decode(response.bodyBytes);
+          debugPrint("Decoded response: $decodedBody");
+          
+          final jsonResponse = json.decode(decodedBody);
+          setState(() {
+              _baseTranscription = jsonResponse['base_model']['text'];
+              
+              if (jsonResponse['fine_tuned_model'] != null) {
+                  _fineTunedTranscription = jsonResponse['fine_tuned_model']['text'];
+              } else {
+                  _fineTunedTranscription = "";
               }
-            } else {
-              debugPrint("Empty response body"); // Debug log
-              setState(() => _transcription = "Empty response from server");
-            }
-          } else {
-            debugPrint("Server error response: ${response.statusCode} - ${response.body}"); // Debug log
-            setState(() => _transcription = "Server error: ${response.statusCode}\n${response.body}");
-          }
-        } catch (e) {
-          debugPrint("Network error: $e"); // Debug log
-          setState(() => _transcription = "Network error: $e");
-        }
+
+              _transcription = "Base Model:\n$_baseTranscription\n\n" +
+                              "Fine-tuned Model:\n$_fineTunedTranscription";
+          });
       } else {
-        debugPrint("No location available"); // Debug log
-        setState(() => _transcription = "Location not available");
+          setState(() => _transcription = "Error: ${response.statusCode}");
       }
+      
     } catch (e, stackTrace) {
-      debugPrint("Error in _uploadAudio: $e"); // Debug log
-      debugPrint("Stack trace: $stackTrace"); // Debug log
+      debugPrint("\nError in _uploadAudio:");
+      debugPrint(e.toString());
+      debugPrint(stackTrace.toString());
       setState(() => _transcription = "Error: ${e.toString()}");
     }
   }
-
+  
   Future<void> _getCurrentLocation() async {
     final hasPermission = await _handleLocationPermission();
     if (!hasPermission) return;
@@ -237,7 +209,9 @@ class _MicScreenState extends State<MicScreen> {
         desiredAccuracy: LocationAccuracy.high
       );
       
-      // Get address from coordinates
+      debugPrint("\n=== Getting Location ===");
+      debugPrint("Position: ${position.latitude}, ${position.longitude}");
+      
       List<Placemark> placemarks = await placemarkFromCoordinates(
         position.latitude,
         position.longitude,
@@ -245,13 +219,33 @@ class _MicScreenState extends State<MicScreen> {
 
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks[0];
+        String rawCountry = place.country ?? "Unknown";
+        debugPrint("Raw country name: $rawCountry");
+        
+        // Strict country mapping
+        final countryMapping = {
+          'Malaysia': 'Malaysia',
+          'Singapore': 'Singapore',
+          'Thailand': 'Thailand',
+          'Indonesia': 'Indonesia',  // Add Indonesia
+        };
+
+        String mappedCountry = countryMapping[rawCountry] ?? "Unknown";
+        debugPrint("Mapped country name: $mappedCountry");
+
         setState(() {
           _currentPosition = position;
-          _country = place.country ?? "Unknown";
+          _country = mappedCountry;
           _locationStatus = 'Location: ${position.latitude}, ${position.longitude}\nCountry: $_country';
         });
+        
+        debugPrint("Location status updated: $_locationStatus");
+      } else {
+        debugPrint("No placemarks found");
       }
+      debugPrint("=== End Getting Location ===\n");
     } catch (e) {
+      debugPrint("Error getting location: $e");
       setState(() => _locationStatus = 'Error getting location: $e');
     }
   }
