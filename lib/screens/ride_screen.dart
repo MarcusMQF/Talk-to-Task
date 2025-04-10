@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/physics.dart';
 import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
+import '../providers/theme_provider.dart';
 import '../screens/ai_chat_screen.dart';
 
 class RideScreen extends StatefulWidget {
@@ -991,21 +992,23 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildMapControls() {
+    final isDark = Provider.of<ThemeProvider>(context).isDarkMode;
+    
     return Positioned(
       right: 16,
-      top: 200,
+      top: 100,
       child: Column(
         children: [
-          // Location focus button
+          // My location button - separated with its own container
           Container(
-            margin: const EdgeInsets.only(bottom: 12),
+            margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: isDark ? AppTheme.grabBlack : Colors.white,
               borderRadius: BorderRadius.circular(8),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.1),
-                  blurRadius: 8,
+                  blurRadius: 6,
                   offset: const Offset(0, 2),
                 ),
               ],
@@ -1015,25 +1018,23 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               child: InkWell(
                 onTap: () {
                   if (_mapController != null) {
-                    // Different camera behavior based on whether there's an active request
+                    // If there's an active request/order, move the map view higher
                     if (_hasActiveRequest) {
-                      // Focus on upper half of the screen when there's an active request
-                      // Use a higher zoom level and slightly higher target position
+                      final adjustedPosition = LatLng(
+                        _initialPosition.latitude - 0.005, // Move up on the map
+                        _initialPosition.longitude
+                      );
+                      
                       _mapController!.animateCamera(
                         CameraUpdate.newCameraPosition(
                           CameraPosition(
-                            // Shift the target position slightly north (upward)
-                            target: LatLng(
-                              _initialPosition.latitude - 0.005, // Shift north
-                              _initialPosition.longitude,
-                            ),
-                            zoom: 16, // Slightly higher zoom
-                            tilt: 0, // No tilt for better overview
+                            target: adjustedPosition,
+                            zoom: 16, // Slightly more zoomed in
                           ),
                         ),
                       );
                     } else {
-                      // Standard centering behavior when no active request
+                      // Center on user's location normally
                       _mapController!.animateCamera(
                         CameraUpdate.newCameraPosition(
                           const CameraPosition(
@@ -1048,20 +1049,23 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: const EdgeInsets.all(8),
+                  width: 40,
+                  height: 40,
                   child: const Icon(Icons.my_location, color: AppTheme.grabGreen, size: 20),
                 ),
               ),
             ),
           ),
-          // Zoom controls container
+          
+          // Zoom controls in a separate container
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: isDark ? AppTheme.grabBlack : Colors.white,
               borderRadius: BorderRadius.circular(8),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.1),
-                  blurRadius: 8,
+                  blurRadius: 6,
                   offset: const Offset(0, 2),
                 ),
               ],
@@ -1083,15 +1087,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     ),
                     child: Container(
                       padding: const EdgeInsets.all(8),
+                      width: 40,
+                      height: 40,
                       child: const Icon(Icons.add, color: AppTheme.grabGreen, size: 20),
                     ),
                   ),
                 ),
-                // Divider
-                Container(
-                  height: 1,
-                  color: Colors.grey.withOpacity(0.2),
-                ),
+                
+                const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
+                
                 // Zoom out button
                 Material(
                   color: Colors.transparent,
@@ -1107,6 +1111,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     ),
                     child: Container(
                       padding: const EdgeInsets.all(8),
+                      width: 40,
+                      height: 40,
                       child: const Icon(Icons.remove, color: AppTheme.grabGreen, size: 20),
                     ),
                   ),

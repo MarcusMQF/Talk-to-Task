@@ -3,23 +3,31 @@ import '../api_keys.dart';
 
 class GeminiService {
   late final GenerativeModel _model;
-  late final ChatSession? _chat;
+  late ChatSession? _chat;
 
   GeminiService() {
     _model = GenerativeModel(
-      model: 'gemini-pro',
+      model: 'gemini-1.5-pro',
       apiKey: ApiKeys.geminiApiKey,
       generationConfig: GenerationConfig(
         temperature: 0.7,
         topP: 0.8,
         topK: 40,
+        maxOutputTokens: 1024,
       ),
     );
   }
 
   /// Starts a new chat session
   Future<void> startNewChat() async {
-    _chat = _model.startChat();
+    _chat = _model.startChat(
+      history: [
+        Content.text("You are an AI driving assistant for a ride-hailing app. "
+            "Help the driver with their tasks, answer questions, and provide useful information. "
+            "Keep responses short and helpful for someone who is driving. "
+            "Current date: ${DateTime.now().toString().split(' ')[0]}"),
+      ],
+    );
   }
 
   /// Sends a message to Gemini and gets a response

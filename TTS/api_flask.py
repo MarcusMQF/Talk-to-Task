@@ -3,6 +3,7 @@ from gtts import gTTS
 from langdetect import detect, LangDetectException
 from googletrans import Translator
 import os
+import base64
 from io import BytesIO
 from flask_cors import CORS  # For handling Cross-Origin Requests
 

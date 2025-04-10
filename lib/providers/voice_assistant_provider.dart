@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import '../services/speech_service.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import '../screens/ai_chat_screen.dart';
 
 enum VoiceAssistantState {
   idle,
@@ -123,6 +122,7 @@ class VoiceAssistantProvider extends ChangeNotifier {
       'cancel_ride': ['cancel', 'abort', 'reject', 'decline'],
       'check_earnings': ['earnings', 'money', 'income', 'pay'],
       'help': ['help', 'support', 'assistance'],
+      'open_ai': ['ai', 'assistant', 'open ai', 'chat']
     };
     
     // Normalize text for matching
@@ -168,10 +168,10 @@ class VoiceAssistantProvider extends ChangeNotifier {
         case 'help':
           response = 'Getting help from Grab support.';
           break;
-          case 'open_ai': // Handle the "open AI" command
-        response = 'Opening AI Chat.';
-        _navigateToAIChatScreen(); // Navigate to AI Chat Screen
-        break;
+        case 'open_ai': // Handle the "open AI" command
+          response = 'Opening AI Chat.';
+          _navigateToAIChatScreen(); // Navigate to AI Chat Screen
+          break;
       }
     } else {
       response = 'Sorry, I didn\'t understand that command.';
@@ -210,26 +210,22 @@ class VoiceAssistantProvider extends ChangeNotifier {
     }
   }
   
-  // Simulate command recognition for UI demo
-  Future<void> simulateCommand(String command) async {
-    if (_state != VoiceAssistantState.idle) return;
-    
-    _state = VoiceAssistantState.listening;
+  // Public method to speak text
+  Future<void> speakResponse(String text) async {
+    _state = VoiceAssistantState.speaking;
     notifyListeners();
-    
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    _state = VoiceAssistantState.processing;
-    _lastWords = command;
-    notifyListeners();
-    
-    await Future.delayed(const Duration(milliseconds: 800));
-    
-    _processCommand(command);
+    await _speakResponse(text);
   }
   
-  // Set command callback
-  void setCommandCallback(Function(String command) callback) {
+  // Reset state
+  void reset() {
+    _state = VoiceAssistantState.idle;
+    _errorMessage = '';
+    notifyListeners();
+  }
+  
+  // Method to set command callback for external use
+  void setCommandCallback(Function(String) callback) {
     onCommandRecognized = callback;
   }
   
@@ -238,31 +234,11 @@ class VoiceAssistantProvider extends ChangeNotifier {
     onCommandRecognized = null;
   }
   
-  // Reset state
-  void reset() {
-    // Stop speaking if active
-    if (_state == VoiceAssistantState.speaking) {
-      _tts.stop();
-    }
-    
-    _state = VoiceAssistantState.idle;
-    _errorMessage = '';
-    _lastWords = '';
-    _responseMessage = '';
-    notifyListeners();
-  }
-  
-  @override
-  void dispose() {
-    _speechService.dispose();
-    _tts.stop();
-    super.dispose();
-  }
-
+  // Function to navigate to AI Chat Screen
   void _navigateToAIChatScreen() {
-  final navigatorKey = GlobalKey<NavigatorState>();
-  navigatorKey.currentState?.push(
-    MaterialPageRoute(builder: (context) => const AIChatScreen()),
-  );
-}
+    // This will be handled by the callback in the UI layer
+    if (onCommandRecognized != null) {
+      onCommandRecognized!('open_ai');
+    }
+  }
 } 
