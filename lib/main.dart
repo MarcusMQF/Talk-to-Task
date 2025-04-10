@@ -30,7 +30,7 @@ class MicScreen extends StatefulWidget {
 
 class _MicScreenState extends State<MicScreen> {
   // Add server URL as a constant
-  static const String SERVER_URL = 'http://192.168.51.204:8000/transcribe/';
+  static const String SERVER_URL = 'http://10.10.13.9:8000/transcribe/';
 
   final AudioRecorder _recorder = AudioRecorder();
   bool _isRecording = false;

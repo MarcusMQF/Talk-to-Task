@@ -90,8 +90,30 @@ for country, model_id in COUNTRY_MODELS.items():
         except Exception as e:
             print(f"Error loading cached model for {country}: {str(e)}")
 
-# Initialize base Whisper model
-base_model = whisper.load_model("base", device="cuda" if torch.cuda.is_available() else "cpu", download_root="models")
+# Initialize base Whisper model first
+print("Loading base Whisper model...")
+base_model = None
+try:
+    base_model = whisper.load_model(
+        "base", 
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        download_root=str(PROJECT_ROOT / "models" / "whisper")
+    )
+    print("Base model loaded successfully")
+except Exception as e:
+    print(f"Error loading base model: {str(e)}")
+    raise RuntimeError("Failed to load base Whisper model")
+
+async def transcribe_with_base_model(file_path: str):
+    """Transcribe audio using the base Whisper model"""
+    try:
+        print("Starting base model transcription...")
+        result = base_model.transcribe(file_path)
+        print(f"Base model transcription complete: {result['text']}")
+        return result["text"]
+    except Exception as e:
+        print(f"Error in base model transcription: {str(e)}")
+        return "Base model transcription failed"
 
 @app.post("/transcribe/")
 async def transcribe_audio(
@@ -102,9 +124,7 @@ async def transcribe_audio(
 ):
     try:
         print(f"Received request - Country: {country}, Lat: {latitude}, Long: {longitude}")
-        if not country:
-            print("Warning: No country provided in request")
-            
+        
         # Save uploaded file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as temp_file:
             content = await file.read()
@@ -112,21 +132,16 @@ async def transcribe_audio(
             temp_path = temp_file.name
             print(f"Saved audio file to: {temp_path}")
 
-        # Determine which fine-tuned model to use
-        fine_tuned_model_id = COUNTRY_MODELS.get(country)
-        if fine_tuned_model_id:
-            print(f"Using fine-tuned model for {country}: {fine_tuned_model_id}")
-        else:
-            print(f"No fine-tuned model available for country: {country}")
+        # Always run base model transcription
+        base_result = await transcribe_with_base_model(temp_path)
+        print(f"Base model result: {base_result}")
 
-        # Run both models in parallel
-        base_result, fine_tuned_result = await asyncio.gather(
-            transcribe_with_base_model(temp_path),
-            transcribe_with_fine_tuned_model(temp_path, country) if fine_tuned_model_id else None
-        )
-
-        print(f"Base result: {base_result}")
-        print(f"Fine-tuned result: {fine_tuned_result}")
+        # Try fine-tuned model if country is supported
+        fine_tuned_result = None
+        fine_tuned_model_id = None
+        if country in COUNTRY_MODELS:
+            fine_tuned_model_id = COUNTRY_MODELS[country]
+            fine_tuned_result = await transcribe_with_fine_tuned_model(temp_path, country)
 
         # Clean up temp file
         os.unlink(temp_path)
@@ -134,13 +149,13 @@ async def transcribe_audio(
         # Prepare response
         response_data = {
             "base_model": {
-                "text": base_result or "Transcription failed",
+                "text": base_result,
                 "model": "whisper-base"
             },
             "fine_tuned_model": {
-                "text": fine_tuned_result or "Transcription failed",
+                "text": fine_tuned_result,
                 "model": fine_tuned_model_id
-            } if fine_tuned_result is not None else None,
+            } if fine_tuned_result else None,
             "location": {
                 "latitude": latitude,
                 "longitude": longitude,
@@ -156,15 +171,6 @@ async def transcribe_audio(
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
-
-# Make sure these helper functions are properly defined as async
-async def transcribe_with_base_model(file_path: str):
-    try:
-        result = await asyncio.to_thread(base_model.transcribe, file_path, language="en")
-        return result["text"]
-    except Exception as e:
-        print(f"Error in base model transcription: {str(e)}")
-        return None
 
 async def transcribe_with_fine_tuned_model(file_path: str, country: str):
     try:
