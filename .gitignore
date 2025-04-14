@@ -44,3 +44,5 @@ app.*.map.json
 
 # Environment variables
 .env
+
+/backend/voice_recognition/

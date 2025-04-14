@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../services/speech_service.dart';
+import '../services/voice_recognition_service.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 enum VoiceAssistantState {
   idle,
@@ -20,7 +24,12 @@ class VoiceAssistantProvider extends ChangeNotifier {
   
   // Speech services
   final SpeechService _speechService = SpeechService();
+  final VoiceRecognitionService _voiceRecognitionService = VoiceRecognitionService();
   final FlutterTts _tts = FlutterTts();
+  
+  // For recording audio
+  final _audioRecorder = AudioRecorder();
+  String? _recordingPath;
   
   // Command callback
   Function(String command)? onCommandRecognized;
@@ -95,10 +104,11 @@ class VoiceAssistantProvider extends ChangeNotifier {
     _lastWords = 'Listening...';
     notifyListeners();
     
-    await _speechService.startListening();
+    // Always use our custom backend
+    await _startRecording();
     
-    // Auto transition to processing after 3 seconds for demo purposes
-    Timer(const Duration(seconds: 3), () {
+    // Auto transition to processing after 5 seconds 
+    Timer(const Duration(seconds: 5), () {
       if (_state == VoiceAssistantState.listening) {
         stopListening();
       }
@@ -107,7 +117,106 @@ class VoiceAssistantProvider extends ChangeNotifier {
   
   // Stop listening
   Future<void> stopListening() async {
-    await _speechService.stopListening();
+    final isRecording = await _audioRecorder.isRecording();
+    if (isRecording) {
+      await _stopRecordingAndTranscribe();
+    } else {
+      await _speechService.stopListening();
+    }
+  }
+  
+  // Start recording audio for backend transcription
+  Future<void> _startRecording() async {
+    try {
+      // Check if has permission
+      final hasPermission = await _audioRecorder.hasPermission();
+      if (!hasPermission) {
+        _handleError('Microphone permission denied');
+        return;
+      }
+      
+      // Get temp directory for recording
+      final tempDir = await getTemporaryDirectory();
+      _recordingPath = '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      
+      // Configure recorder
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+          sampleRate: 44100,
+        ),
+        path: _recordingPath!,
+      );
+      
+      debugPrint('Recording started at: $_recordingPath');
+    } catch (e) {
+      _handleError('Error starting recording: $e');
+    }
+  }
+  
+  // Stop recording and send to backend for transcription
+  Future<void> _stopRecordingAndTranscribe() async {
+    try {
+      final isRecording = await _audioRecorder.isRecording();
+      if (!isRecording) {
+        return;
+      }
+      
+      // Stop recording
+      final path = await _audioRecorder.stop();
+      
+      // Check if file exists
+      if (path == null || !File(path).existsSync()) {
+        _handleError('Recording file not found');
+        return;
+      }
+      
+      // Set state to processing
+      _state = VoiceAssistantState.processing;
+      notifyListeners();
+      
+      // Send to our voice recognition backend
+      final result = await _voiceRecognitionService.transcribeAudio(
+        File(path),
+        country: 'Malaysia', // Use Malaysian model
+      );
+      
+      // Use the transcription result
+      if (result != null) {
+        final text = result.text;
+        _lastWords = text;
+        _processCommand(text);
+        notifyListeners();
+      } else {
+        _handleError('Transcription failed');
+      }
+      
+      // Clean up recording file
+      try {
+        await File(path).delete();
+      } catch (e) {
+        debugPrint('Error deleting recording: $e');
+      }
+      
+    } catch (e) {
+      _handleError('Error in transcription: $e');
+    }
+  }
+  
+  // Handle errors
+  void _handleError(String message) {
+    _state = VoiceAssistantState.error;
+    _errorMessage = message;
+    debugPrint('Voice Assistant Error: $message');
+    notifyListeners();
+    
+    // Reset after error
+    Timer(const Duration(seconds: 3), () {
+      if (_state == VoiceAssistantState.error) {
+        reset();
+      }
+    });
   }
   
   // Process recognized command

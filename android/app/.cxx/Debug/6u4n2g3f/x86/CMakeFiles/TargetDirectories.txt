@@ -1,0 +1,2 @@
+C:/Users/User/Documents/Visual Studio Code/UMH2025/android/app/.cxx/Debug/6u4n2g3f/x86/CMakeFiles/edit_cache.dir
+C:/Users/User/Documents/Visual Studio Code/UMH2025/android/app/.cxx/Debug/6u4n2g3f/x86/CMakeFiles/rebuild_cache.dir

@@ -4,11 +4,7 @@ import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/gemini_service.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 class AIChatScreen extends StatefulWidget {
   const AIChatScreen({super.key});
@@ -17,21 +13,26 @@ class AIChatScreen extends StatefulWidget {
   State<AIChatScreen> createState() => _AIChatScreenState();
 }
 
-class _AIChatScreenState extends State<AIChatScreen> {
+class _AIChatScreenState extends State<AIChatScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _chatController = TextEditingController();
   final List<Map<String, dynamic>> _messages = [
     {
       'sender': 'ai', 
-      'message': 'Hi! Nice to see you. How are you today? Can I help you?',
+      'message': 'Hi! How are you today? Can I help you?',
       'timestamp': DateTime.now().toString(),
     },
   ]; // Initial welcome message
 
   bool _isSendingMessage = false;
+  bool _isSpeaking = false;
   late VoiceAssistantProvider _voiceProvider;
   final GeminiService _geminiService = GeminiService();
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  final FlutterTts _flutterTts = FlutterTts();
   final ScrollController _scrollController = ScrollController();
+  
+  // Animation controller for mic button
+  late AnimationController _animationController;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
@@ -49,9 +50,39 @@ class _AIChatScreenState extends State<AIChatScreen> {
     // Initialize Gemini chat session
     _geminiService.startNewChat();
     
+    // Initialize TTS
+    _initializeTts();
+    
+    // Initialize animation controller for mic button
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+    
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.3).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: Curves.easeInOut,
+      ),
+    );
+    
     // Speak the initial welcome message
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _speakAIResponse(_messages.first['message']!);
+    });
+  }
+
+  Future<void> _initializeTts() async {
+    await _flutterTts.setLanguage("en-US");
+    await _flutterTts.setSpeechRate(0.5); // Slightly slower for better comprehension
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.0);
+
+    // Set up completion listener
+    _flutterTts.setCompletionHandler(() {
+      setState(() {
+        _isSpeaking = false;
+      });
     });
   }
 
@@ -59,8 +90,9 @@ class _AIChatScreenState extends State<AIChatScreen> {
   void dispose() {
     _voiceProvider.removeCommandCallback();
     _chatController.dispose();
-    _audioPlayer.dispose();
+    _flutterTts.stop();
     _scrollController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -138,68 +170,42 @@ class _AIChatScreenState extends State<AIChatScreen> {
     // Reset any ongoing speech
     _voiceProvider.reset();
     
-    // Use the TTS API directly
-    await _sendTextToTTS(text);
+    if (text.isEmpty) return;
+
+    // Stop any ongoing speech
+    if (_isSpeaking) {
+      await _flutterTts.stop();
+    }
+
+    setState(() {
+      _isSpeaking = true;
+    });
+
+    // Clean up the text - remove markdown formatting if needed
+    String cleanText = text.replaceAll('*', '').replaceAll('#', '').replaceAll('_', '');
+
+    await _flutterTts.speak(cleanText);
   }
   
-  Future<void> _sendTextToTTS(String text) async {
-    // Use actual IP address of your computer when running on a physical device
-    final apiUrl = Uri.parse('http://10.167.68.40:5000/tts');
-    
-    print('Attempting to connect to TTS API at: $apiUrl');
-
-    try {
-      print('Sending TTS request for: "${text.length > 40 ? text.substring(0, 40) + "..." : text}"');
-      
-      final response = await http.post(
-        apiUrl,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'text': text}),
-      );
-
-      if (response.statusCode == 200) {
-        print('TTS request successful');
-        
-        try {
-          // Parse the response JSON
-          final responseData = jsonDecode(response.body);
-          
-          if (responseData.containsKey('audio') && responseData['audio'] != null) {
-            print('Audio data received, length: ${responseData['audio'].length}');
-            
-            // Decode base64 to bytes
-            final bytes = base64Decode(responseData['audio']);
-            
-            // Create a temporary file
-            final tempDir = await getTemporaryDirectory();
-            final file = File('${tempDir.path}/tts_response.mp3');
-            await file.writeAsBytes(bytes);
-            
-            // Play the audio
-            await _audioPlayer.setFilePath(file.path);
-            await _audioPlayer.play();
-            
-            print('Playing TTS audio');
-          } else {
-            print('No audio data in response: $responseData');
-          }
-        } catch (e) {
-          print('Error decoding or playing audio: $e');
-        }
-      } else {
-        print('TTS API Error: ${response.statusCode}');
-        print('Response: ${response.body}');
-      }
-    } catch (e) {
-      print('TTS API Connection Error: $e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDark = themeProvider.isDarkMode;
     final backgroundColor = isDark ? Colors.grey[900] : Colors.white;
+    
+    // Listen to voice assistant state changes
+    final voiceState = _voiceProvider.state;
+    final voiceError = _voiceProvider.errorMessage;
+    
+    // Control animation based on state
+    if (voiceState == VoiceAssistantState.listening) {
+      _animationController.repeat(reverse: true);
+    } else {
+      if (_animationController.isAnimating) {
+        _animationController.stop();
+        _animationController.reset();
+      }
+    }
     
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -229,11 +235,64 @@ class _AIChatScreenState extends State<AIChatScreen> {
       // Simple body with white background
       body: Column(
         children: [
+          // Error message if voice recognition fails
+          if (voiceState == VoiceAssistantState.error && voiceError.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              color: Colors.red.shade700,
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Voice recognition error: $voiceError',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _voiceProvider.reset(),
+                  ),
+                ],
+              ),
+            ),
+          
+          // Processing status indicator
+          if (voiceState == VoiceAssistantState.processing)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              color: Colors.blue.shade700,
+              child: const Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Processing your speech...',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
           // Chat messages
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 20.0),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20.0),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final message = _messages[index];
@@ -247,7 +306,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
                     children: [
                       Container(
                         constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(context).size.width * 0.7,
+                          maxWidth: MediaQuery.of(context).size.width * 0.55,
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 13.0, vertical: 12.0),
                         decoration: BoxDecoration(
@@ -342,38 +401,31 @@ class _AIChatScreenState extends State<AIChatScreen> {
                     // Mic button inside on left
                     Padding(
                       padding: const EdgeInsets.only(left: 10.0),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.mic,
-                          color: Colors.grey,
-                        ),
-                        onPressed: () {
-                          if (_voiceProvider.isListening) {
-                            _voiceProvider.stopListening();
-                            setState(() {});
-                          } else {
-                            _voiceProvider.startListening();
-                            setState(() {});
-                          }
-                        },
-                      ),
+                      child: _buildMicButton(voiceState),
                     ),
                     
                     // Text input in the middle
                     Expanded(
                       child: TextField(
                         controller: _chatController,
-                        decoration: const InputDecoration(
-                          hintText: 'Type message...',
+                        decoration: InputDecoration(
+                          hintText: voiceState == VoiceAssistantState.processing 
+                              ? 'Processing speech...' 
+                              : voiceState == VoiceAssistantState.listening
+                                  ? 'Listening...'
+                                  : 'Type message...',
                           hintStyle: TextStyle(
-                            color: Colors.grey,
+                            color: voiceState == VoiceAssistantState.processing || 
+                                  voiceState == VoiceAssistantState.listening
+                                ? AppTheme.grabGreen
+                                : Colors.grey,
                           ),
                           border: InputBorder.none,
                           focusedBorder: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           errorBorder: InputBorder.none,
                           disabledBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(vertical: 15),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 15),
                           fillColor: Colors.transparent,
                           filled: true,
                         ),
@@ -414,5 +466,58 @@ class _AIChatScreenState extends State<AIChatScreen> {
         ],
       ),
     );
+  }
+  
+  // Helper method to build mic button with different states
+  Widget _buildMicButton(VoiceAssistantState state) {
+    switch (state) {
+      case VoiceAssistantState.listening:
+        return ScaleTransition(
+          scale: _pulseAnimation,
+          child: IconButton(
+            icon: const Icon(
+              Icons.mic,
+              color: AppTheme.grabGreen,
+            ),
+            onPressed: () {
+              _voiceProvider.stopListening();
+            },
+            tooltip: 'Stop listening',
+          ),
+        );
+      case VoiceAssistantState.processing:
+        return Container(
+          width: 40,
+          height: 40,
+          padding: const EdgeInsets.all(8),
+          child: const CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppTheme.grabGreen,
+          ),
+        );
+      case VoiceAssistantState.error:
+        return IconButton(
+          icon: const Icon(
+            Icons.mic_off,
+            color: Colors.red,
+          ),
+          onPressed: () {
+            _voiceProvider.reset();
+            _voiceProvider.startListening();
+          },
+          tooltip: 'Retry',
+        );
+      default:
+        return IconButton(
+          icon: const Icon(
+            Icons.mic_none,
+            color: Colors.grey,
+          ),
+          onPressed: () {
+            _voiceProvider.startListening();
+          },
+          tooltip: 'Tap to speak',
+        );
+    }
   }
 }

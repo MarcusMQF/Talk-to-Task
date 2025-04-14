@@ -1,12 +1,17 @@
 buildscript {
-    ext.kotlin_version = '1.8.10'
+    ext {
+        kotlin_version = '1.8.10'
+        compileSdkVersion = 34
+        targetSdkVersion = 34
+        minSdkVersion = 23
+    }
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath 'com.android.tools.build:gradle:8.2.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
@@ -16,8 +21,12 @@ allprojects {
         google()
         mavenCentral()
     }
+    gradle.projectsEvaluated {
+        tasks.withType(JavaCompile) {
+            options.compilerArgs << "-Xlint:deprecation"
+        }
+    }
 }
-
 rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"

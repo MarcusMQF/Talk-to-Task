@@ -11,3 +11,10 @@ flask==2.3.3  # Web framework for API_flask.py
 flask-cors==4.0.0  # Cross-Origin Resource Sharing for Flask
 fastapi==0.104.1  # Web framework for API.py (alternative)
 uvicorn==0.24.0  # ASGI server for FastAPI
+openai-whisper
+transformers==4.34.0  # Hugging Face Transformers for Whisper model
+librosa==0.10.0  # Audio processing library for Whisper model
+pydub
+soundfile
+noisereduce # Noise reduction library for Whisper model
+python-multipart==0.0.6  # Multipart form data handling for FastAPI

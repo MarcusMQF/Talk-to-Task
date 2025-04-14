@@ -11,20 +11,34 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
   cupertino_icons: ^1.0.8
   provider: ^6.1.1
   lottie: ^2.7.0
   flutter_animate: ^4.5.0
   shared_preferences: ^2.2.2
   flutter_tts: ^4.2.2
-  google_maps_flutter: ^2.12.1
+  google_maps_flutter: 2.10.1
   flutter_dotenv: ^5.1.0
   draggable_fab: ^0.1.4
   google_generative_ai: ^0.2.2
   just_audio: ^0.9.46
   http: ^1.3.0
-  path_provider: ^2.1.5
+  record: ^6.0.0
+  path_provider: ^2.1.1
+  path: ^1.9.0
+  location: ^5.0.3
+  geocoding: ^2.1.1
+  battery_plus: ^6.2.1
+  connectivity_plus: ^5.0.0
+  intl: ^0.18.0
+  weather: ^3.0.0
+  http_parser: ^4.0.0
+  permission_handler: ^11.0.1
+
+  flutter_plugin_android_lifecycle: ^2.0.26
+
+  porcupine_flutter: ^3.0.0
+  speech_to_text: ^7.0.0
 
 dev_dependencies:
   flutter_test:
@@ -35,43 +49,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  
   assets:
     - assets/animations/
     - assets/icons/
     - assets/sounds/
     - .env
+    - assets/hey_grab.ppn
 
-
-  
-
-  
-  
-  
-  
-
-  
-  
-
-  
-  
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  

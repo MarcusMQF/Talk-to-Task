@@ -5,9 +5,11 @@ gradle-wrapper.jar
 /gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
-
+.env
 # Remember to never publicly share your keystore.
 # See https://flutter.dev/to/reference-keystore
 key.properties
 **/*.keystore
 **/*.jks
+grab_voice/backend/voice_recognition/huggingface/*/models--*/**
+grab_voice/backend/voice_recognition/huggingface/models/
