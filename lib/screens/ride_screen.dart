@@ -56,6 +56,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   bool _isSpeaking = false;
   // Google Maps controller
   GoogleMapController? _mapController;
+  bool _mapInitialized = false; // Track if map has been initially centered
 
   // Initial camera position (example coordinates - should be replaced with actual pickup location)
   static const LatLng _initialPosition =
@@ -63,6 +64,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Markers for pickup and dropoff locations
   final Set<Marker> _markers = {};
+  Marker? _driverLocationMarker;
+  Marker? _pickupLocationMarker;
+  Set<Polyline> _polylines = {};
 
   // Timer animations
   late AnimationController _timerShakeController;
@@ -125,6 +129,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _initializeLocation();
     _initializeWakeWordDetection();
     _initializeTts();
+    
+    // Set up location updates
+    _setupLocationUpdates();
     
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -317,13 +324,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   void _setupMarkers() {
-    _markers.add(
-      const Marker(
-        markerId: MarkerId('pickup'),
-        position: _initialPosition,
-        infoWindow: InfoWindow(title: 'Pickup Location'),
-      ),
-    );
+    // Only add initial markers if needed
+    // Driver location marker will be added from getCurrentLocation
   }
 
   void _setupRequestCardAnimations() {
@@ -1068,17 +1070,61 @@ void _toggleOnlineStatus() {
         setState(() {
           _country = countryMapping[rawCountry] ?? rawCountry;
           
-          // Move map camera to current position if available
-          if (_mapController != null && _currentPosition != null) {
+          // Update driver's current location marker
+          _updateDriverLocationMarker();
+          
+          // Only center on first load when map is initialized,
+          // but don't move the camera on subsequent location updates
+          if (_mapController != null && !_mapInitialized && _currentPosition != null) {
+            _mapInitialized = true;
+            final driverPosition = LatLng(
+              _currentPosition!.latitude!,
+              _currentPosition!.longitude!
+            );
+            
             _mapController!.animateCamera(
-              CameraUpdate.newLatLng(
-                LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!),
-              ),
+              CameraUpdate.newLatLng(driverPosition),
             );
           }
         });
       }
     } catch (e) {
+      print('Error getting current location: $e');
+    }
+  }
+
+  // Add this new method to update the driver location marker
+  void _updateDriverLocationMarker() {
+    if (_currentPosition != null) {
+      final driverPosition = LatLng(
+        _currentPosition!.latitude!,
+        _currentPosition!.longitude!,
+      );
+      
+      // Create or update the driver marker with green pin
+      final updatedMarker = Marker(
+        markerId: const MarkerId('driver_location'),
+        position: driverPosition,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        infoWindow: const InfoWindow(title: 'Your Location'),
+        zIndex: 2, // Ensure driver marker is on top of other markers
+      );
+      
+      setState(() {
+        // Remove old driver marker if it exists
+        if (_driverLocationMarker != null) {
+          _markers.remove(_driverLocationMarker);
+        }
+        
+        // Add new driver marker
+        _driverLocationMarker = updatedMarker;
+        _markers.add(_driverLocationMarker!);
+        
+        // If we have a pickup marker, ensure it's still visible
+        if (_pickupLocationMarker != null && !_markers.contains(_pickupLocationMarker)) {
+          _markers.add(_pickupLocationMarker!);
+        }
+      });
     }
   }
 
@@ -1741,11 +1787,7 @@ void _toggleOnlineStatus() {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
-                            _dismissRequest();
-                            Future.delayed(const Duration(milliseconds: 500),
-                                () {
-                              setState(() {});
-                            });
+                            _acceptRideRequest();
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppTheme.grabGreen,
@@ -1844,28 +1886,34 @@ void _toggleOnlineStatus() {
               color: Colors.transparent,
               child: InkWell(
                 onTap: () {
-                  if (_mapController != null) {
+                  if (_mapController != null && _currentPosition != null) {
+                    // Use driver's actual position from current location
+                    final driverPosition = LatLng(
+                      _currentPosition!.latitude!,
+                      _currentPosition!.longitude!
+                    );
+                    
                     // If there's an active request/order, move the map view higher
                     if (_hasActiveRequest) {
                       final adjustedPosition = LatLng(
-                          _initialPosition.latitude -
-                              0.005, // Move up on the map
-                          _initialPosition.longitude);
+                        driverPosition.latitude - 0.005, // Move up by 0.005 on the map
+                        driverPosition.longitude
+                      );
 
                       _mapController!.animateCamera(
                         CameraUpdate.newCameraPosition(
                           CameraPosition(
                             target: adjustedPosition,
-                            zoom: 16, // Slightly more zoomed in
+                            zoom: 16, // Increased zoom level for better detail with order container
                           ),
                         ),
                       );
                     } else {
-                      // Center on user's location normally
+                      // Center on driver's location normally
                       _mapController!.animateCamera(
                         CameraUpdate.newCameraPosition(
-                          const CameraPosition(
-                            target: _initialPosition,
+                          CameraPosition(
+                            target: driverPosition,
                             zoom: 15,
                           ),
                         ),
@@ -1970,6 +2018,7 @@ void _toggleOnlineStatus() {
               _mapController = controller;
             },
             markers: _markers,
+            polylines: _polylines,
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
@@ -2382,8 +2431,106 @@ void _toggleOnlineStatus() {
       );
     });
   }
-}
 
+  // Add this new method to set up periodic location updates
+  void _setupLocationUpdates() {
+    // Update location every 5 seconds for more frequent updates
+    Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (mounted) {
+        _getCurrentLocation();
+      } else {
+        timer.cancel();
+      }
+    });
+    
+    // Also set up continuous location updates via the location package
+    _location.onLocationChanged.listen((LocationData currentLocation) {
+      if (mounted) {
+        setState(() {
+          _currentPosition = currentLocation;
+          // Update the driver marker whenever location changes
+          // But don't recenter the map - only update the marker
+          _updateDriverLocationMarker();
+        });
+      }
+    });
+  }
+
+  // Add a method to accept the ride request
+  void _acceptRideRequest() {
+    if (_hasActiveRequest) {
+      setState(() {
+        _hasActiveRequest = false;
+        _requestTimer?.cancel();
+        
+        // Add pickup location marker
+        final pickupPosition = LatLng(3.1390, 101.6869); // This would come from the actual request
+        _pickupLocationMarker = Marker(
+          markerId: const MarkerId('pickup_location'),
+          position: pickupPosition,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+          infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
+        );
+        
+        _markers.add(_pickupLocationMarker!);
+        
+        // Show route between driver and pickup
+        _showRouteToPickup();
+      });
+    }
+  }
+
+  // Add a method to draw the route between driver and pickup location
+  Future<void> _showRouteToPickup() async {
+    if (_currentPosition == null || _pickupLocationMarker == null) {
+      return;
+    }
+    
+    // Create a polyline between driver and pickup location
+    final driverPosition = LatLng(
+      _currentPosition!.latitude!,
+      _currentPosition!.longitude!
+    );
+    
+    final pickupPosition = _pickupLocationMarker!.position;
+    
+    // In a real app, you would fetch the actual route from a routing API
+    // Here we're just drawing a straight line for demonstration
+    final polyline = Polyline(
+      polylineId: const PolylineId('route_to_pickup'),
+      points: [driverPosition, pickupPosition],
+      color: AppTheme.grabGreen,
+      width: 4,
+    );
+    
+    setState(() {
+      _polylines.clear();
+      _polylines.add(polyline);
+      
+      // Adjust camera to show both markers
+      _fitBoundsForRoute(driverPosition, pickupPosition);
+    });
+  }
+  
+  // Add a method to adjust the camera to show both markers
+  void _fitBoundsForRoute(LatLng origin, LatLng destination) {
+    if (_mapController == null) return;
+    
+    // Calculate the bounds that include both points with some padding
+    final double minLat = min(origin.latitude, destination.latitude) - 0.01;
+    final double maxLat = max(origin.latitude, destination.latitude) + 0.01;
+    final double minLng = min(origin.longitude, destination.longitude) - 0.01;
+    final double maxLng = max(origin.longitude, destination.longitude) + 0.01;
+    
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+    
+    // Animate camera to fit these bounds
+    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50));
+  }
+}
 class DeviceInfoService {
   final Battery _battery = Battery();
   final Connectivity _connectivity = Connectivity();
