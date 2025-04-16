@@ -2104,7 +2104,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Build weather indicator positioned on the left side
   Widget _buildWeatherIndicator() {
     return Positioned(
-      left: 20,
+      left: 22,
       top: 140,
       child: _isLoadingWeather
           ? Container(
@@ -2165,7 +2165,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           // Country flag indicator - hide during navigation mode
           if (!_isNavigationMode)
             Positioned(
-              top: 52,
+              top: 55,
               left: 20,
               child: GestureDetector(
                 onTap: () {
