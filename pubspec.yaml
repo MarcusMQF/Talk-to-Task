@@ -50,9 +50,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/animations/
+    # - assets/animations/
     - assets/icons/
-    - assets/sounds/
+    # - assets/sounds/
     - .env
     - assets/hey_grab.ppn
 

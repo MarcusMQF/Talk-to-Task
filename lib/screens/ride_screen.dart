@@ -16,11 +16,9 @@ import 'package:path/path.dart' as p;
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:location/location.dart';
 import 'package:http_parser/http_parser.dart';
-import 'package:battery_plus/battery_plus.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:intl/intl.dart';
 import '../services/gemini_service.dart';
 import '../services/wake_word.dart';
+import '../services/get_device_info.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'dart:typed_data';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -46,7 +44,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Voice button position
   late AnimationController _voiceButtonAnimController;
-  Offset _voiceButtonPosition = const Offset(300, 600);  // Will be adjusted in initState based on screen size
+  Offset _voiceButtonPosition = const Offset(
+      300, 600); // Will be adjusted in initState based on screen size
 
   bool _isOnline = false;
   bool _hasActiveRequest = false;
@@ -120,7 +119,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   String _driverToPickupDistance = "0.0 km";
   final StreamController<String> _geminiStreamController =
       StreamController<String>.broadcast();
-  
+
   // Navigation & directions related properties
   bool _isDirectionsLoading = false;
   bool _isNavigationMode = false;
@@ -130,7 +129,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   int _currentNavigationStep = 0;
   List<Map<String, dynamic>> _navigationSteps = [];
   Timer? _navigationUpdateTimer;
-  
+
   @override
   void initState() {
     super.initState();
@@ -142,16 +141,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _initializeLocation();
     _initializeWakeWordDetection();
     _initializeTts();
-    
+
     // Set up location updates
     _setupLocationUpdates();
-    
+
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _positionVoiceButtonBottomRight();
       _setupVoiceCommandHandler();
     });
-    
+
     _voiceProvider =
         Provider.of<VoiceAssistantProvider>(context, listen: false);
     Future.delayed(Duration.zero, () async {
@@ -253,7 +252,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       try {
         final ByteData data = await rootBundle.load('assets/hey_grab.ppn');
         print(
-            '✅ PPC file loaded successfully! Size: ${data.lengthInBytes} bytes');
+            '✅ PPN file loaded successfully! Size: ${data.lengthInBytes} bytes');
       } catch (e) {
         print('❌ Failed to load PPN file: $e');
         print(
@@ -575,27 +574,28 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
     }
   }
-void _toggleOnlineStatus() {
-  // Always update the online state immediately for smooth toggle animation
-  setState(() {
-    _isOnline = !_isOnline;
-    
-    // AI STATUS INDICATOR - This comment helps the AI know the driver's status
-    // Driver is currently: ${_isOnline ? "ONLINE" : "OFFLINE"}
-    
-    if (_isOnline) {
-      // Going online - show request card with animation
-      _showNewRequest();
-    } else {
-      // Going offline - but keep request card visible for animation
-      if (_hasActiveRequest) {
-        // Keep _hasActiveRequest true until animation completes
-        _dismissRequest();
-        _requestTimer?.cancel();
+
+  void _toggleOnlineStatus() {
+    // Always update the online state immediately for smooth toggle animation
+    setState(() {
+      _isOnline = !_isOnline;
+
+      // AI STATUS INDICATOR - This comment helps the AI know the driver's status
+      // Driver is currently: ${_isOnline ? "ONLINE" : "OFFLINE"}
+
+      if (_isOnline) {
+        // Going online - show request card with animation
+        _showNewRequest();
+      } else {
+        // Going offline - but keep request card visible for animation
+        if (_hasActiveRequest) {
+          // Keep _hasActiveRequest true until animation completes
+          _dismissRequest();
+          _requestTimer?.cancel();
+        }
       }
-    }
-  });
-}
+    });
+  }
 
   Future<void> _initializeLocation() async {
     await _getCurrentLocation();
@@ -674,7 +674,7 @@ void _toggleOnlineStatus() {
       try {
         final amplitude = await _recorder.getAmplitude();
         double newAmplitude = amplitude.current;
-        
+
         // Skip invalid amplitude values
         if (newAmplitude.isInfinite || newAmplitude.isNaN) {
           print('⚠️ Skipping invalid amplitude value');
@@ -938,7 +938,9 @@ void _toggleOnlineStatus() {
             "No fine-tuned model available for $_country";
 
         // Get real-time device context
-        final deviceContext = await _deviceInfo.getDeviceContext();
+        Map<String, dynamic> deviceContext =
+            await _deviceInfo.getDeviceContext();
+        print(deviceContext);
 
         // Create Gemini prompt with dynamic device info
         final prompt = '''
@@ -1055,6 +1057,37 @@ void _toggleOnlineStatus() {
         return;
       }
     }
+    await _location.changeSettings(
+      accuracy: LocationAccuracy.high, // Use high accuracy instead of PRIORITY_HIGH_ACCURACY
+      interval: 10000, // Update interval in milliseconds
+      distanceFilter: 5, // Minimum distance in meters to trigger updates
+    );
+    try {
+      _currentPosition = await _location.getLocation();
+      print(
+          'Current position: ${_currentPosition?.latitude}, ${_currentPosition?.longitude}');
+
+      // Try to get the country name
+      if (_currentPosition != null) {
+        try {
+          final placemarks = await geocoding.placemarkFromCoordinates(
+            _currentPosition!.latitude!,
+            _currentPosition!.longitude!,
+          );
+
+          if (placemarks.isNotEmpty) {
+            setState(() {
+              _country = placemarks.first.country ?? "Unknown";
+              print('Country detected: $_country');
+            });
+          }
+        } catch (e) {
+          print('Error getting country: $e');
+        }
+      }
+    } catch (e) {
+      print('Error getting location: $e');
+    }
   }
 
   Future<void> _getCurrentLocation() async {
@@ -1083,19 +1116,19 @@ void _toggleOnlineStatus() {
 
         setState(() {
           _country = countryMapping[rawCountry] ?? rawCountry;
-          
+
           // Update driver's current location marker
           _updateDriverLocationMarker();
-          
+
           // Only center on first load when map is initialized,
           // but don't move the camera on subsequent location updates
-          if (_mapController != null && !_mapInitialized && _currentPosition != null) {
+          if (_mapController != null &&
+              !_mapInitialized &&
+              _currentPosition != null) {
             _mapInitialized = true;
             final driverPosition = LatLng(
-              _currentPosition!.latitude!,
-              _currentPosition!.longitude!
-            );
-            
+                _currentPosition!.latitude!, _currentPosition!.longitude!);
+
             _mapController!.animateCamera(
               CameraUpdate.newLatLng(driverPosition),
             );
@@ -1110,47 +1143,51 @@ void _toggleOnlineStatus() {
   // Update this method to handle post-pickup navigation differently
   void _updateDriverLocationMarker() {
     if (_currentPosition != null) {
-      final driverPosition = LatLng(
-        _currentPosition!.latitude!,
-        _currentPosition!.longitude!
-      );
-      
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
       // In normal mode or pickup mode, update the driver marker with current position
       if (!_isNavigatingToDestination) {
         // Create or update the driver marker with green pin at current location
         final updatedMarker = Marker(
           markerId: const MarkerId('driver_location'),
           position: driverPosition,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+          icon:
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
           infoWindow: const InfoWindow(title: 'Your Location'),
           zIndex: 2, // Ensure driver marker is on top of other markers
         );
-        
+
         setState(() {
           // Remove old driver marker if it exists
           if (_driverLocationMarker != null) {
             _markers.remove(_driverLocationMarker);
           }
-          
+
           // Add new driver marker
           _driverLocationMarker = updatedMarker;
           _markers.add(_driverLocationMarker!);
-          
+
           // If we're navigating to pickup location
           if (_isNavigatingToPickup) {
             // Make sure pickup marker is visible
-            if (_pickupLocationMarker != null && !_markers.contains(_pickupLocationMarker)) {
+            if (_pickupLocationMarker != null &&
+                !_markers.contains(_pickupLocationMarker)) {
               _markers.add(_pickupLocationMarker!);
             }
-            
+
             // Update route from current position to pickup if needed
             // Only update if driver has moved significantly
-            if (_polylines.isNotEmpty && _calculateDistance(driverPosition, _polylines.first.points.first) > 0.05) {
+            if (_polylines.isNotEmpty &&
+                _calculateDistance(
+                        driverPosition, _polylines.first.points.first) >
+                    0.05) {
               _polylines.clear();
-              final pickupPosition = _pickupLocationMarker != null 
-                ? _pickupLocationMarker!.position 
-                : LatLng(3.0733, 101.6073);
-              _createRouteLinePoints(driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
+              final pickupPosition = _pickupLocationMarker != null
+                  ? _pickupLocationMarker!.position
+                  : LatLng(3.0733, 101.6073);
+              _createRouteLinePoints(driverPosition, pickupPosition,
+                  AppTheme.grabGreen, 'route_to_pickup');
             }
           }
         });
@@ -1220,7 +1257,7 @@ void _toggleOnlineStatus() {
   Widget _buildOnlineToggle() {
     // Don't show online toggle when in navigation mode
     if (_isNavigationMode) return const SizedBox.shrink();
-    
+
     return Positioned(
       top: 48,
       left: 0,
@@ -1929,23 +1966,22 @@ void _toggleOnlineStatus() {
                 onTap: () {
                   if (_mapController != null && _currentPosition != null) {
                     // Use driver's actual position from current location
-                    final driverPosition = LatLng(
-                      _currentPosition!.latitude!,
-                      _currentPosition!.longitude!
-                    );
-                    
+                    final driverPosition = LatLng(_currentPosition!.latitude!,
+                        _currentPosition!.longitude!);
+
                     // If there's an active request/order, move the map view higher
                     if (_hasActiveRequest) {
                       final adjustedPosition = LatLng(
-                        driverPosition.latitude - 0.005, // Move up by 0.005 on the map
-                        driverPosition.longitude
-                      );
+                          driverPosition.latitude -
+                              0.005, // Move up by 0.005 on the map
+                          driverPosition.longitude);
 
                       _mapController!.animateCamera(
                         CameraUpdate.newCameraPosition(
                           CameraPosition(
                             target: adjustedPosition,
-                            zoom: 16, // Increased zoom level for better detail with order container
+                            zoom:
+                                16, // Increased zoom level for better detail with order container
                           ),
                         ),
                       );
@@ -2143,7 +2179,8 @@ void _toggleOnlineStatus() {
                   onTap: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const AIChatScreen()),
+                      MaterialPageRoute(
+                          builder: (context) => const AIChatScreen()),
                     );
                   },
                   child: const Center(
@@ -2336,7 +2373,7 @@ void _toggleOnlineStatus() {
                               const Text(
                                 "Your speech:",
                                 style: TextStyle(
-                                  fontSize: 14, 
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.grey,
                                 ),
@@ -2351,11 +2388,13 @@ void _toggleOnlineStatus() {
                               ),
                               const SizedBox(height: 12),
                             ],
-                            if (_fineTunedTranscription.isNotEmpty && _fineTunedTranscription != _baseTranscription) ...[
+                            if (_fineTunedTranscription.isNotEmpty &&
+                                _fineTunedTranscription !=
+                                    _baseTranscription) ...[
                               const Text(
                                 "Enhanced recognition:",
                                 style: TextStyle(
-                                  fontSize: 14, 
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.grey,
                                 ),
@@ -2472,45 +2511,77 @@ void _toggleOnlineStatus() {
   // Method to position voice button at bottom right
   void _positionVoiceButtonBottomRight() {
     if (!mounted) return;
-    
-    final screenWidth = MediaQuery.of(context).size.width; 
+
+    final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
-    
+
     // Position in bottom right with some padding
     setState(() {
       _voiceButtonPosition = Offset(
-        screenWidth - 84.0,  // Right edge - button width - some padding
-        screenHeight - 180.0  // Bottom edge - button height - some padding
-      );
+          screenWidth - 84.0, // Right edge - button width - some padding
+          screenHeight - 180.0 // Bottom edge - button height - some padding
+          );
     });
   }
 
   // Add this new method to set up periodic location updates
   void _setupLocationUpdates() {
-    // Update location every 5 seconds for more frequent updates
-    Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (mounted) {
-        _getCurrentLocation();
-        // Update distance calculations when location is refreshed
-        _updateDistanceInformation();
-      } else {
-        timer.cancel();
-      }
-    });
-    
-    // Also set up continuous location updates via the location package
+    // Set up location change listener
     _location.onLocationChanged.listen((LocationData currentLocation) {
       if (mounted) {
         setState(() {
           _currentPosition = currentLocation;
-          // Update the driver marker whenever location changes
-          // But don't recenter the map - only update the marker
-          _updateDriverLocationMarker();
-          // Recalculate distances when driver moves
-          _updateDistanceInformation();
         });
+
+        // Update driver marker on the map if in navigation mode
+        if (_isNavigationMode && _mapController != null) {
+          _updateDriverLocationMarker();
+
+          // Calculate distance to pickup if navigating to pickup
+          if (_isNavigatingToPickup && _pickupLocationMarker != null) {
+            // Calculate distance between driver and pickup point
+            final driverLat = _currentPosition!.latitude!;
+            final driverLng = _currentPosition!.longitude!;
+            final pickupLat = _pickupLocationMarker!.position.latitude;
+            final pickupLng = _pickupLocationMarker!.position.longitude;
+
+            // Simple distance calculation (not taking into account roads)
+            final distance =
+                calculateDistance(driverLat, driverLng, pickupLat, pickupLng);
+
+            setState(() {
+              _driverToPickupDistance = "${distance.toStringAsFixed(1)} km";
+
+              // If driver is very close to pickup point, show pickup confirmation
+              if (distance < 0.1 && !_hasPickedUpPassenger) {
+                // Within 100 meters
+                _showPickupConfirmation();
+              }
+            });
+          }
+        }
       }
     });
+  }
+
+// Helper method to calculate distance between two points
+  double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadius = 6371; // Radius of the earth in km
+    final double dLat = _degreesToRadians(lat2 - lat1);
+    final double dLon = _degreesToRadians(lon2 - lon1);
+
+    final double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_degreesToRadians(lat1)) *
+            cos(_degreesToRadians(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+
+    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return earthRadius * c; // Distance in km
+  }
+
+  double _degreesToRadians(double degrees) {
+    return degrees * (pi / 180);
   }
 
   // Add a method to accept the ride request
@@ -2525,30 +2596,32 @@ void _toggleOnlineStatus() {
         _hasPickedUpPassenger = false;
         _currentNavigationStep = 0;
       });
-      
+
       // Speak confirmation of accepting the order
-      _speakResponse("Order accepted. Starting navigation to pickup location at ${_pickupLocation}.");
-      
+      _speakResponse(
+          "Order accepted. Starting navigation to pickup location at ${_pickupLocation}.");
+
       // Get pickup and destination coordinates for routing
       if (_currentPosition != null) {
-        final driverPosition = LatLng(
-          _currentPosition!.latitude!,
-          _currentPosition!.longitude!
-        );
-        final pickupPosition = LatLng(3.0733, 101.6073); // Sunway Pyramid coordinates
-        final destinationPosition = LatLng(3.1348, 101.6867); // KL Sentral coordinates
-        
+        final driverPosition =
+            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+        final pickupPosition =
+            LatLng(3.0733, 101.6073); // Sunway Pyramid coordinates
+        final destinationPosition =
+            LatLng(3.1348, 101.6867); // KL Sentral coordinates
+
         // Setup initial route to pickup
-        _setupRouteToPickup(driverPosition, pickupPosition, destinationPosition);
+        _setupRouteToPickup(
+            driverPosition, pickupPosition, destinationPosition);
       }
-      
+
       // Get accurate pickup and destination coordinates
       // Fetch route details and show on map
       _fetchRideDetails();
-      
+
       // Generate navigation steps to pickup
       _generateNavigationStepsToPickup();
-      
+
       // Start navigation updates
       _startNavigationUpdates();
     }
@@ -2646,38 +2719,42 @@ void _toggleOnlineStatus() {
   void _startNavigationUpdates() {
     // Cancel any existing timer
     _navigationUpdateTimer?.cancel();
-    
+
     // Reset the current step
     _currentNavigationStep = 0;
-    
+
     // Speak the first instruction immediately
     if (_navigationSteps.isNotEmpty) {
       _speakNavigationInstruction(_navigationSteps[0]);
     }
-    
+
     // Create a timer that advances to the next navigation step every few seconds
     // In a real app, this would be based on GPS position updates
-    _navigationUpdateTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+    _navigationUpdateTimer =
+        Timer.periodic(const Duration(seconds: 10), (timer) {
       if (mounted) {
         setState(() {
           if (_currentNavigationStep < _navigationSteps.length - 1) {
             _currentNavigationStep++;
-            
+
             // Speak the new navigation instruction
-            _speakNavigationInstruction(_navigationSteps[_currentNavigationStep]);
+            _speakNavigationInstruction(
+                _navigationSteps[_currentNavigationStep]);
           } else {
             // Last step reached
             if (_isNavigatingToPickup) {
               // Speak arrival at pickup notification
-              _speakResponse("You have arrived at the pickup location. Please look for your passenger.");
-              
+              _speakResponse(
+                  "You have arrived at the pickup location. Please look for your passenger.");
+
               // Show pickup confirmation UI
               _showPickupConfirmation();
               timer.cancel();
             } else if (_isNavigatingToDestination) {
               // Speak arrival at destination notification
-              _speakResponse("You have arrived at your destination. This trip is now complete.");
-              
+              _speakResponse(
+                  "You have arrived at your destination. This trip is now complete.");
+
               // Trip completed
               _showTripCompletedDialog();
               timer.cancel();
@@ -2693,14 +2770,14 @@ void _toggleOnlineStatus() {
   // Method to show pickup confirmation UI
   void _showPickupConfirmation() {
     if (!mounted) return;
-    
+
     // Cancel any existing navigation updates
     _navigationUpdateTimer?.cancel();
-    
+
     setState(() {
       _isNavigatingToPickup = false;
     });
-    
+
     // Show a bottom sheet for pickup confirmation
     showModalBottomSheet(
       context: context,
@@ -2788,25 +2865,26 @@ void _toggleOnlineStatus() {
   // Method to confirm pickup and start navigation to destination
   void _confirmPickup() {
     // Store pickup location coordinates
-    final LatLng pickupPosition = _pickupLocationMarker != null 
-      ? _pickupLocationMarker!.position 
-      : LatLng(3.0733, 101.6073); // Fallback to Sunway Pyramid coordinates
-    
+    final LatLng pickupPosition = _pickupLocationMarker != null
+        ? _pickupLocationMarker!.position
+        : LatLng(3.0733, 101.6073); // Fallback to Sunway Pyramid coordinates
+
     // For destination we use the actual destination coordinates
-    final destinationPosition = LatLng(3.1348, 101.6867); // KL Sentral coordinates
-    
+    final destinationPosition =
+        LatLng(3.1348, 101.6867); // KL Sentral coordinates
+
     setState(() {
       _hasPickedUpPassenger = true;
       _isNavigatingToPickup = false;
       _isNavigatingToDestination = true;
-      
+
       // Generate navigation steps to destination
       _generateNavigationStepsToDestination();
-      
+
       // Clear all existing markers and routes
       _markers.clear();
       _polylines.clear();
-      
+
       // Add pickup location marker (green)
       _driverLocationMarker = Marker(
         markerId: const MarkerId('driver_location'),
@@ -2815,7 +2893,7 @@ void _toggleOnlineStatus() {
         infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
         zIndex: 2,
       );
-      
+
       // Add destination marker (red)
       final destinationMarker = Marker(
         markerId: const MarkerId('destination'),
@@ -2824,24 +2902,26 @@ void _toggleOnlineStatus() {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
         infoWindow: InfoWindow(title: 'Destination: $_destination'),
       );
-      
+
       // Add only pickup and destination markers
       _markers.add(_driverLocationMarker!);
       _markers.add(destinationMarker);
     });
-    
+
     // Speak confirmation of pickup and start of navigation to destination
-    _speakResponse("Passenger picked up. Starting navigation to ${_destination}.");
-    
+    _speakResponse(
+        "Passenger picked up. Starting navigation to ${_destination}.");
+
     // Setup route from pickup to destination only
-    _createRouteLinePoints(pickupPosition, destinationPosition, AppTheme.grabGreen, 'route_to_destination');
-    
+    _createRouteLinePoints(pickupPosition, destinationPosition,
+        AppTheme.grabGreen, 'route_to_destination');
+
     // Fit both markers on the map
     _fitMarkersOnMap([pickupPosition, destinationPosition]);
-    
+
     // Fetch updated route details for destination
     _fetchRideDetails();
-    
+
     // Start navigation updates for destination
     _startNavigationUpdates();
   }
@@ -2849,13 +2929,14 @@ void _toggleOnlineStatus() {
   // Method to show trip completed dialog
   void _showTripCompletedDialog() {
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Trip Completed'),
-        content: const Text('You have arrived at the destination. Would you like to end the trip?'),
+        content: const Text(
+            'You have arrived at the destination. Would you like to end the trip?'),
         actions: [
           ElevatedButton(
             onPressed: () {
@@ -2882,24 +2963,22 @@ void _toggleOnlineStatus() {
       _hasPickedUpPassenger = false;
       _navigationSteps.clear();
       _currentNavigationStep = 0;
-      
+
       // Clear navigation route
       _polylines.clear();
-      
+
       // Reset markers except for driver location
       _markers.clear();
       if (_driverLocationMarker != null) {
         _markers.add(_driverLocationMarker!);
       }
     });
-    
+
     // Focus back on device's current location
     if (_mapController != null && _currentPosition != null) {
-      final driverPosition = LatLng(
-        _currentPosition!.latitude!,
-        _currentPosition!.longitude!
-      );
-      
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
       // Animate camera to focus on driver's current location with appropriate zoom level
       _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
@@ -2910,7 +2989,7 @@ void _toggleOnlineStatus() {
         ),
       );
     }
-    
+
     // Show a brief message to indicate the driver is available for new orders
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -2919,7 +2998,7 @@ void _toggleOnlineStatus() {
         backgroundColor: AppTheme.grabGreen,
       ),
     );
-    
+
     // Show a new order request after a short delay if online
     if (_isOnline) {
       Future.delayed(const Duration(seconds: 3), () {
@@ -2935,7 +3014,7 @@ void _toggleOnlineStatus() {
     setState(() {
       _isDirectionsLoading = true;
     });
-    
+
     try {
       if (_currentPosition == null) {
         setState(() {
@@ -2943,37 +3022,40 @@ void _toggleOnlineStatus() {
         });
         return;
       }
-      
+
       // Driver's current position
-      final LatLng driverPosition = LatLng(
-        _currentPosition!.latitude!,
-        _currentPosition!.longitude!
-      );
-      
+      final LatLng driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
       // These would normally come from your backend API with real coordinates
-      final LatLng pickupPosition = LatLng(3.0733, 101.6073); // Actual Sunway Pyramid Mall coordinates
-      final LatLng destinationPosition = LatLng(3.1348, 101.6867); // Actual KL Sentral coordinates
-      
+      final LatLng pickupPosition =
+          LatLng(3.0733, 101.6073); // Actual Sunway Pyramid Mall coordinates
+      final LatLng destinationPosition =
+          LatLng(3.1348, 101.6867); // Actual KL Sentral coordinates
+
       // Calculate distances using the Haversine formula
-      final double driverToPickupDistance = _calculateDistance(driverPosition, pickupPosition);
-      final double pickupToDestinationDistance = _calculateDistance(pickupPosition, destinationPosition);
-      
+      final double driverToPickupDistance =
+          _calculateDistance(driverPosition, pickupPosition);
+      final double pickupToDestinationDistance =
+          _calculateDistance(pickupPosition, destinationPosition);
+
       // Update the UI with accurate information
       setState(() {
-        _driverToPickupDistance = "${driverToPickupDistance.toStringAsFixed(1)} km";
+        _driverToPickupDistance =
+            "${driverToPickupDistance.toStringAsFixed(1)} km";
         _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
-        
+
         // Estimate pickup time based on average speed of 40 km/h
         final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
         _estimatedPickupTime = "$pickupMinutes min";
-        
+
         // Estimate trip duration based on average speed of 35 km/h (accounting for traffic)
         final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
         _estimatedTripDuration = "$tripMinutes min";
-        
+
         _isDirectionsLoading = false;
       });
-      
+
       // Only show route on map if we're not already in destination navigation mode
       // This prevents redrawing the route after pickup
       if (!(_isNavigatingToDestination && _hasPickedUpPassenger)) {
@@ -2983,7 +3065,8 @@ void _toggleOnlineStatus() {
           _showRouteToPickup();
         } else if (!_isNavigationMode) {
           // For full route display with all markers, but only if not in navigation mode
-          _setupRouteDisplay(driverPosition, pickupPosition, destinationPosition);
+          _setupRouteDisplay(
+              driverPosition, pickupPosition, destinationPosition);
         }
       }
     } catch (e) {
@@ -2997,42 +3080,41 @@ void _toggleOnlineStatus() {
   // Add this method to draw the route between driver and pickup location
   Future<void> _showRouteToPickup() async {
     if (_currentPosition == null || _pickupLocationMarker == null) return;
-    
+
     // Get driver and pickup positions
-    final driverPosition = LatLng(
-      _currentPosition!.latitude!,
-      _currentPosition!.longitude!
-    );
-    
+    final driverPosition =
+        LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
     final pickupPosition = _pickupLocationMarker!.position;
-    
+
     // Clear existing polylines
     setState(() {
       _polylines.clear();
     });
-    
+
     // Use the API-based routing method to create the route
-    await _createRouteLinePoints(driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
-    
+    await _createRouteLinePoints(
+        driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
+
     // Adjust camera to show both markers
     _fitBoundsForRoute(driverPosition, pickupPosition);
   }
-  
+
   // Add a method to adjust the camera to show both markers
   void _fitBoundsForRoute(LatLng origin, LatLng destination) {
     if (_mapController == null) return;
-    
+
     // Calculate the bounds that include both points with some padding
     final double minLat = min(origin.latitude, destination.latitude) - 0.01;
     final double maxLat = max(origin.latitude, destination.latitude) + 0.01;
     final double minLng = min(origin.longitude, destination.longitude) - 0.01;
     final double maxLng = max(origin.longitude, destination.longitude) + 0.01;
-    
+
     final bounds = LatLngBounds(
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
-    
+
     // Animate camera to fit these bounds
     _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50));
   }
@@ -3040,23 +3122,22 @@ void _toggleOnlineStatus() {
   // Calculate distance between two coordinates in kilometers
   double _calculateDistance(LatLng start, LatLng end) {
     const double earthRadius = 6371; // Earth's radius in kilometers
-    
+
     // Convert latitudes and longitudes from degrees to radians
     final double startLatRad = start.latitude * (pi / 180);
     final double startLngRad = start.longitude * (pi / 180);
     final double endLatRad = end.latitude * (pi / 180);
     final double endLngRad = end.longitude * (pi / 180);
-    
+
     // Haversine formula
     final double dLat = endLatRad - startLatRad;
     final double dLng = endLngRad - startLngRad;
-    
+
     final double a = sin(dLat / 2) * sin(dLat / 2) +
-                     cos(startLatRad) * cos(endLatRad) * 
-                     sin(dLng / 2) * sin(dLng / 2);
+        cos(startLatRad) * cos(endLatRad) * sin(dLng / 2) * sin(dLng / 2);
     final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
     final double distance = earthRadius * c;
-    
+
     return distance;
   }
 
@@ -3064,29 +3145,31 @@ void _toggleOnlineStatus() {
   void _updateDistanceInformation() {
     if (_currentPosition != null) {
       // Driver's current position
-      final LatLng driverPosition = LatLng(
-        _currentPosition!.latitude!,
-        _currentPosition!.longitude!
-      );
-      
+      final LatLng driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
       // These would normally come from your backend API with real coordinates
       // Using actual coordinates for Sunway Pyramid Mall and KL Sentral
-      final LatLng pickupPosition = LatLng(3.0733, 101.6073); // Sunway Pyramid Mall
+      final LatLng pickupPosition =
+          LatLng(3.0733, 101.6073); // Sunway Pyramid Mall
       final LatLng destinationPosition = LatLng(3.1348, 101.6867); // KL Sentral
-      
+
       // Calculate distances
-      final double driverToPickupDistance = _calculateDistance(driverPosition, pickupPosition);
-      final double pickupToDestinationDistance = _calculateDistance(pickupPosition, destinationPosition);
-      
+      final double driverToPickupDistance =
+          _calculateDistance(driverPosition, pickupPosition);
+      final double pickupToDestinationDistance =
+          _calculateDistance(pickupPosition, destinationPosition);
+
       // Format distances with one decimal place
       setState(() {
-        _driverToPickupDistance = "${driverToPickupDistance.toStringAsFixed(1)} km";
+        _driverToPickupDistance =
+            "${driverToPickupDistance.toStringAsFixed(1)} km";
         _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
-        
+
         // Estimate pickup time - rough estimate based on average speed of 40 km/h
         final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
         _estimatedPickupTime = "$pickupMinutes min";
-        
+
         // Estimate trip duration - rough estimate based on average speed of 35 km/h (accounting for traffic)
         final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
         _estimatedTripDuration = "$tripMinutes min";
@@ -3095,11 +3178,12 @@ void _toggleOnlineStatus() {
   }
 
   // Set up route display on map with markers and polyline
-  void _setupRouteDisplay(LatLng driverPosition, LatLng pickupPosition, LatLng destinationPosition) {
+  void _setupRouteDisplay(LatLng driverPosition, LatLng pickupPosition,
+      LatLng destinationPosition) {
     // Clear existing markers and polylines
     _markers.clear();
     _polylines.clear();
-    
+
     // Add driver's current location marker
     _driverLocationMarker = Marker(
       markerId: const MarkerId('driver_location'),
@@ -3108,7 +3192,7 @@ void _toggleOnlineStatus() {
       infoWindow: const InfoWindow(title: 'Your Location'),
       zIndex: 2, // Ensure driver marker is on top of other markers
     );
-    
+
     // Add pickup location marker
     _pickupLocationMarker = Marker(
       markerId: const MarkerId('pickup_location'),
@@ -3116,7 +3200,7 @@ void _toggleOnlineStatus() {
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
       infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
     );
-    
+
     // Add destination marker
     Marker destinationMarker = Marker(
       markerId: const MarkerId('destination'),
@@ -3124,60 +3208,65 @@ void _toggleOnlineStatus() {
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
       infoWindow: InfoWindow(title: 'Destination: $_destination'),
     );
-    
+
     // Add all markers to the map
     _markers.add(_driverLocationMarker!);
     _markers.add(_pickupLocationMarker!);
     _markers.add(destinationMarker);
-    
+
     // Create route polylines for driver to pickup and pickup to destination using API-based routing
-    _createRouteLinePoints(driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
-    _createRouteLinePoints(pickupPosition, destinationPosition, AppTheme.grabGreen, 'route_to_destination');
-    
+    _createRouteLinePoints(
+        driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
+    _createRouteLinePoints(pickupPosition, destinationPosition,
+        AppTheme.grabGreen, 'route_to_destination');
+
     // Fit all markers on the map
     _fitAllMarkersOnMap();
   }
-  
+
   // Fit all markers on the map
   void _fitAllMarkersOnMap() {
     if (_mapController == null || _markers.isEmpty) return;
-    
+
     // Calculate the bounds that include all markers
     double minLat = 90;
     double maxLat = -90;
     double minLng = 180;
     double maxLng = -180;
-    
+
     for (final marker in _markers) {
       if (marker.position.latitude < minLat) minLat = marker.position.latitude;
       if (marker.position.latitude > maxLat) maxLat = marker.position.latitude;
-      if (marker.position.longitude < minLng) minLng = marker.position.longitude;
-      if (marker.position.longitude > maxLng) maxLng = marker.position.longitude;
+      if (marker.position.longitude < minLng)
+        minLng = marker.position.longitude;
+      if (marker.position.longitude > maxLng)
+        maxLng = marker.position.longitude;
     }
-    
+
     // Add some padding
     minLat -= 0.02;
     maxLat += 0.02;
     minLng -= 0.02;
     maxLng += 0.02;
-    
+
     final bounds = LatLngBounds(
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
-    
+
     // Animate camera to fit all markers
     _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50));
   }
 
   // Build the navigation interface for turn-by-turn directions
   Widget _buildNavigationInterface() {
-    if (_navigationSteps.isEmpty || _currentNavigationStep >= _navigationSteps.length) {
+    if (_navigationSteps.isEmpty ||
+        _currentNavigationStep >= _navigationSteps.length) {
       return const SizedBox.shrink();
     }
-    
+
     final currentStep = _navigationSteps[_currentNavigationStep];
-    
+
     return Column(
       children: [
         // Show loading indicator when fetching route
@@ -3191,13 +3280,12 @@ void _toggleOnlineStatus() {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SizedBox(
-                    width: 20, 
-                    height: 20, 
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    )
-                  ),
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      )),
                   SizedBox(width: 12),
                   Text(
                     "Loading route...",
@@ -3217,7 +3305,8 @@ void _toggleOnlineStatus() {
               if (_hasPickedUpPassenger)
                 Container(
                   margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.green,
                     borderRadius: BorderRadius.circular(12),
@@ -3247,7 +3336,8 @@ void _toggleOnlineStatus() {
                         context: context,
                         builder: (context) => AlertDialog(
                           title: const Text('Exit Navigation?'),
-                          content: const Text('Are you sure you want to exit navigation?'),
+                          content: const Text(
+                              'Are you sure you want to exit navigation?'),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context),
@@ -3284,14 +3374,18 @@ void _toggleOnlineStatus() {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _isNavigatingToPickup ? 'Navigating to pickup' : 'Navigating to destination',
+                          _isNavigatingToPickup
+                              ? 'Navigating to pickup'
+                              : 'Navigating to destination',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
-                          _isNavigatingToPickup ? _pickupLocation : _destination,
+                          _isNavigatingToPickup
+                              ? _pickupLocation
+                              : _destination,
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 12,
@@ -3305,7 +3399,9 @@ void _toggleOnlineStatus() {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        _isNavigatingToPickup ? _estimatedPickupTime : _estimatedTripDuration,
+                        _isNavigatingToPickup
+                            ? _estimatedPickupTime
+                            : _estimatedTripDuration,
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -3397,55 +3493,55 @@ void _toggleOnlineStatus() {
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: _isNavigatingToDestination
-                  ? SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
-                        onPressed: _showTripCompletedDialog,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.grabGreen,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                    ? SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: _showTripCompletedDialog,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.grabGreen,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            elevation: 2,
                           ),
-                          elevation: 2,
-                        ),
-                        child: const Text(
-                          'Arrived',
-                          style: TextStyle(
-                            fontSize: 16, 
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                          child: const Text(
+                            'Arrived',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildNavigationAction(
+                            icon: Icons.call,
+                            label: 'Call',
+                            onTap: _showCallDialog,
+                          ),
+                          _buildNavigationAction(
+                            icon: Icons.message,
+                            label: 'Message',
+                            onTap: () {},
+                          ),
+                          if (_isNavigatingToPickup)
+                            _buildNavigationAction(
+                              icon: Icons.check_circle,
+                              label: 'Pickup',
+                              onTap: _showPickupConfirmation,
+                            )
+                          else
+                            _buildNavigationAction(
+                              icon: Icons.flag,
+                              label: 'Arrived',
+                              onTap: _showTripCompletedDialog,
+                            ),
+                        ],
                       ),
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildNavigationAction(
-                          icon: Icons.call,
-                          label: 'Call',
-                          onTap: _showCallDialog,
-                        ),
-                        _buildNavigationAction(
-                          icon: Icons.message,
-                          label: 'Message',
-                          onTap: () {},
-                        ),
-                        if (_isNavigatingToPickup)
-                          _buildNavigationAction(
-                            icon: Icons.check_circle,
-                            label: 'Pickup',
-                            onTap: _showPickupConfirmation,
-                          )
-                        else
-                          _buildNavigationAction(
-                            icon: Icons.flag,
-                            label: 'Arrived',
-                            onTap: _showTripCompletedDialog,
-                          ),
-                      ],
-                    ),
               ),
             ],
           ),
@@ -3455,32 +3551,33 @@ void _toggleOnlineStatus() {
   }
 
   // Add this method to fetch actual route from Google Maps Directions API
-  Future<List<LatLng>> _fetchRouteCoordinates(LatLng origin, LatLng destination) async {
+  Future<List<LatLng>> _fetchRouteCoordinates(
+      LatLng origin, LatLng destination) async {
     try {
       // Get API key from environment variables using flutter_dotenv
       final apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
-      
+
       // Create the request URL for the Directions API
       final String url = 'https://maps.googleapis.com/maps/api/directions/json?'
           'origin=${origin.latitude},${origin.longitude}'
           '&destination=${destination.latitude},${destination.longitude}'
           '&mode=driving'
           '&key=$apiKey';
-      
+
       // Make the HTTP request to the Directions API
       final response = await http.get(Uri.parse(url));
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        
+
         if (data['status'] == 'OK') {
           // Extract the route points from the response
           final routes = data['routes'] as List;
-          
+
           if (routes.isNotEmpty) {
             // Get the encoded polyline string from the first route
             final points = routes[0]['overview_polyline']['points'] as String;
-            
+
             // Decode the polyline string into a list of LatLng points
             return _decodePolyline(points);
           }
@@ -3492,7 +3589,7 @@ void _toggleOnlineStatus() {
         print('HTTP error: ${response.statusCode}');
         throw Exception('Failed to get directions: ${response.statusCode}');
       }
-      
+
       // If we reach here without returning or throwing, throw an exception
       throw Exception('Failed to get valid route data');
     } catch (e) {
@@ -3501,55 +3598,56 @@ void _toggleOnlineStatus() {
       throw Exception('Could not fetch route data: $e');
     }
   }
-  
+
   // Helper method to decode Google's polyline format
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> poly = [];
     int index = 0, len = encoded.length;
     int lat = 0, lng = 0;
-    
+
     while (index < len) {
       int b, shift = 0, result = 0;
-      
+
       do {
         b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-      
+
       int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lat += dlat;
-      
+
       shift = 0;
       result = 0;
-      
+
       do {
         b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-      
+
       int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lng += dlng;
-      
+
       final p = LatLng(lat / 1E5, lng / 1E5);
       poly.add(p);
     }
-    
+
     return poly;
   }
-  
+
   // Update this method to create realistic route polylines using the fetched coordinates
-  Future<void> _createRouteLinePoints(LatLng start, LatLng end, Color color, String id) async {
+  Future<void> _createRouteLinePoints(
+      LatLng start, LatLng end, Color color, String id) async {
     try {
-      // Show loading indicator 
+      // Show loading indicator
       setState(() {
         _isDirectionsLoading = true;
       });
-      
+
       // Fetch route coordinates - this will throw if it fails
       final List<LatLng> routePoints = await _fetchRouteCoordinates(start, end);
-      
+
       // Only create and add the polyline if we got valid route points
       if (routePoints.isNotEmpty) {
         final polyline = Polyline(
@@ -3558,7 +3656,7 @@ void _toggleOnlineStatus() {
           color: color,
           width: 4,
         );
-        
+
         setState(() {
           _polylines.add(polyline);
           _isDirectionsLoading = false;
@@ -3570,7 +3668,7 @@ void _toggleOnlineStatus() {
       setState(() {
         _isDirectionsLoading = false;
       });
-      
+
       // Notify the user that route fetching failed
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -3582,12 +3680,13 @@ void _toggleOnlineStatus() {
   }
 
   // Updated method to specifically set up the route to pickup location
-  Future<void> _setupRouteToPickup(LatLng driverPosition, LatLng pickupPosition, LatLng destinationPosition) async {
+  Future<void> _setupRouteToPickup(LatLng driverPosition, LatLng pickupPosition,
+      LatLng destinationPosition) async {
     try {
       // Clear existing markers and polylines
       _markers.clear();
       _polylines.clear();
-      
+
       // Add driver's current location marker
       _driverLocationMarker = Marker(
         markerId: const MarkerId('driver_location'),
@@ -3596,7 +3695,7 @@ void _toggleOnlineStatus() {
         infoWindow: const InfoWindow(title: 'Your Location'),
         zIndex: 2, // Ensure driver marker is on top of other markers
       );
-      
+
       // Add pickup location marker
       _pickupLocationMarker = Marker(
         markerId: const MarkerId('pickup_location'),
@@ -3604,49 +3703,50 @@ void _toggleOnlineStatus() {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
         infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
       );
-      
+
       // Add markers to the map - only driver and pickup in pickup phase
       _markers.add(_driverLocationMarker!);
       _markers.add(_pickupLocationMarker!);
-      
+
       // Draw route from driver to pickup
-      await _createRouteLinePoints(driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
-      
+      await _createRouteLinePoints(driverPosition, pickupPosition,
+          AppTheme.grabGreen, 'route_to_pickup');
+
       // Fit both markers on the map
       _fitMarkersOnMap([driverPosition, pickupPosition]);
     } catch (e) {
       print('Error setting up route to pickup: $e');
     }
   }
-  
+
   // Helper method to fit map to show specific points
   void _fitMarkersOnMap(List<LatLng> points) {
     if (_mapController == null || points.isEmpty) return;
-    
+
     // Calculate the bounds that include all points
     double minLat = 90;
     double maxLat = -90;
     double minLng = 180;
     double maxLng = -180;
-    
+
     for (final point in points) {
       if (point.latitude < minLat) minLat = point.latitude;
       if (point.latitude > maxLat) maxLat = point.latitude;
       if (point.longitude < minLng) minLng = point.longitude;
       if (point.longitude > maxLng) maxLng = point.longitude;
     }
-    
+
     // Add some padding
     minLat -= 0.02;
     maxLat += 0.02;
     minLng -= 0.02;
     maxLng += 0.02;
-    
+
     final bounds = LatLngBounds(
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
-    
+
     // Animate camera to fit all points
     _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50));
   }
@@ -3654,140 +3754,35 @@ void _toggleOnlineStatus() {
   // Method to speak navigation direction instructions
   Future<void> _speakNavigationInstruction(Map<String, dynamic> step) async {
     if (!mounted) return;
-    
+
     // Stop any ongoing speech
     if (_isSpeaking) {
       await _flutterTts.stop();
     }
-    
+
     // Create a natural sounding navigation instruction
     String instruction = step['instruction'] as String;
     String distance = step['distance'] as String;
     String maneuver = step['maneuver'] as String;
-    
+
     // Format the speech in a more natural way
     String speechText = '';
-    
+
     // Add appropriate phrases based on maneuver type
     if (maneuver == 'destination') {
-      speechText = 'You have arrived at your ${ _isNavigatingToPickup ? 'pickup point' : 'destination' }. $instruction';
+      speechText =
+          'You have arrived at your ${_isNavigatingToPickup ? 'pickup point' : 'destination'}. $instruction';
     } else if (distance == '0m') {
       speechText = instruction;
     } else {
       speechText = 'In $distance, $instruction';
     }
-    
+
     // Speak the instruction
     setState(() {
       _isSpeaking = true;
     });
-    
+
     await _flutterTts.speak(speechText);
-  }
-}
-class DeviceInfoService {
-  final Battery _battery = Battery();
-  final Connectivity _connectivity = Connectivity();
-  
-  // Mock weather data - replace with actual API call in production
-  Map<String, String> _weatherCache = {};
-  final List<String> _weatherConditions = [
-    'Sunny', 'Partly cloudy', 'Cloudy', 'Light rain', 'Raining', 'Thunderstorms'
-  ];
-  final List<String> _temperatures = ['28°C', '29°C', '30°C', '31°C', '32°C', '27°C'];
-Future<Map<String, dynamic>> getDeviceContext() async {
-  // Get battery level
-  final batteryLevel = await _battery.batteryLevel;
-  
-  // Get battery charging state
-  final batteryState = await _battery.batteryState;
-  final isCharging = batteryState == BatteryState.charging || 
-                     batteryState == BatteryState.full;
-  
-  // Get network status
-  final connectivityResult = await _connectivity.checkConnectivity();
-  final networkStatus = _getNetworkStrength(connectivityResult);
-
-  // Get current time
-  final now = DateTime.now();
-  final timeStr = DateFormat('h:mm a').format(now);
-
-  // Get traffic condition based on time
-  final trafficCondition = _getTrafficCondition(now);
-  
-  // Get weather data
-  final weather = await _getWeatherData();
-
-  return {
-    'battery': '$batteryLevel%${isCharging ? " (Charging)" : ""}',
-    'network': networkStatus,
-    'time': '$timeStr, $trafficCondition traffic',
-    'weather': weather,
-  };
-}
-
-  Future<String> _getWeatherData() async {
-    // In a real app, you would call a weather API here
-    // For now, we'll use mock data that changes based on time of day
-    
-    // Check if we have cached weather within the last hour
-    final now = DateTime.now();
-    final dateKey = '${now.year}-${now.month}-${now.day}-${now.hour}';
-    
-    if (_weatherCache.containsKey(dateKey)) {
-      return _weatherCache[dateKey]!;
-    }
-    
-    // Generate weather based on time of day
-    final random = Random();
-    int index;
-    
-    if (now.hour >= 6 && now.hour < 11) {
-      // Morning - more likely to be clear
-      index = random.nextInt(3); // First 3 conditions
-    } else if (now.hour >= 11 && now.hour < 15) {
-      // Midday - could be anything
-      index = random.nextInt(_weatherConditions.length);
-    } else if (now.hour >= 15 && now.hour < 19) {
-      // Afternoon - more likely to rain
-      index = 2 + random.nextInt(4); // Last 4 conditions
-    } else {
-      // Evening/night
-      index = random.nextInt(_weatherConditions.length);
-    }
-    
-    final tempIndex = random.nextInt(_temperatures.length);
-    final weather = "${_weatherConditions[index]}, ${_temperatures[tempIndex]}";
-    
-    // Cache the result
-    _weatherCache[dateKey] = weather;
-    
-    return weather;
-  }
-
-  String _getNetworkStrength(ConnectivityResult result) {
-    // Existing method implementation
-    switch (result) {
-      case ConnectivityResult.mobile:
-        return 'Strong (4G)';
-      case ConnectivityResult.wifi:
-        return 'Strong (WiFi)';
-      case ConnectivityResult.none:
-        return 'No Connection';
-      default:
-        return 'Unknown';
-    }
-  }
-
-  String _getTrafficCondition(DateTime time) {
-    // Existing method implementation
-    final hour = time.hour;
-    if ((hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19)) {
-      return 'heavy';
-    } else if ((hour >= 10 && hour <= 16) || (hour >= 20 && hour <= 22)) {
-      return 'moderate';
-    } else {
-      return 'light';
-    }
   }
 }
