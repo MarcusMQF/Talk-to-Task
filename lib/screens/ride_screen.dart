@@ -237,15 +237,18 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Future<void> _initializeWakeWordDetection() async {
     try {
       print('Initializing wake word detection...');
+
+      // Set up callback for wake word detection - only set it once
       WakeWordService.onWakeWordDetected = () {
         print("🎙️ WAKE WORD DETECTED!");
         if (mounted) {
-          // Make sure we're on the UI thread
-          WidgetsBinding.instance.addPostFrameCallback((_) {
+          // Use a microtask to avoid calling setState during build
+          Future.microtask(() {
             _triggerVoiceAssistant();
           });
         }
       };
+
       // Check if the PPC file exists first
       try {
         final ByteData data = await rootBundle.load('assets/hey_grab.ppn');
@@ -258,23 +261,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         return; // Don't continue initialization if file can't be loaded
       }
 
-      // Set up callback for wake word detection
-      WakeWordService.onWakeWordDetected = () {
-        // When wake word is detected, we want to trigger the voice assistant
-        if (mounted) {
-          // Use a microtask to avoid calling setState during build
-          Future.microtask(() {
-            // Trigger the voice assistant UI (same as mic button)
-            _triggerVoiceAssistant();
-          });
-        }
-      };
-
       // Start listening for wake words
-      bool success = await WakeWordService.startListening();
-      print('Wake word detection initialized: $success');
+      bool initialized = await WakeWordService.initialize();
+      if (initialized) {
+        bool success = await WakeWordService.startListening();
+        print('Wake word detection started: $success');
 
-      if (!success) {
+        if (!success) {
+          print('Failed to start wake word detection');
+        }
+      } else {
         print('Failed to initialize wake word detection');
       }
     } catch (e) {
@@ -1056,7 +1052,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       }
     }
     await _location.changeSettings(
-      accuracy: LocationAccuracy.high, // Use high accuracy instead of PRIORITY_HIGH_ACCURACY
+      accuracy: LocationAccuracy
+          .high, // Use high accuracy instead of PRIORITY_HIGH_ACCURACY
       interval: 10000, // Update interval in milliseconds
       distanceFilter: 5, // Minimum distance in meters to trigger updates
     );
