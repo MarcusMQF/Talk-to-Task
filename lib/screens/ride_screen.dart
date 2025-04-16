@@ -1,29 +1,25 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'dart:async';
 import 'package:flutter/physics.dart';
+import 'package:http/http.dart' as http;
+import 'package:location/location.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+import '../services/audio_processing_service.dart';
 import '../constants/app_theme.dart';
 import '../providers/voice_assistant_provider.dart';
 import '../providers/theme_provider.dart';
 import '../screens/ai_chat_screen.dart';
-import 'dart:io';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:record/record.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
-import 'package:geocoding/geocoding.dart' as geocoding;
-import 'package:location/location.dart';
-import 'package:http_parser/http_parser.dart';
-import '../services/gemini_service.dart';
 import '../services/wake_word.dart';
 import '../services/get_device_info.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'dart:typed_data';
-import 'package:flutter_tts/flutter_tts.dart';
-import 'dart:math';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class RideScreen extends StatefulWidget {
   const RideScreen({super.key});
@@ -50,6 +46,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   bool _isOnline = false;
   bool _hasActiveRequest = false;
   bool _isProcessing = false;
+  bool _isRecording = false;
   int _remainingSeconds = 15;
   Timer? _requestTimer;
   final FlutterTts _flutterTts = FlutterTts();
@@ -73,42 +70,20 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   late AnimationController _timerGlowController;
   late Animation<double> _timerShakeAnimation;
   late Animation<double> _timerGlowAnimation;
-
-  // Store provider reference for safe disposal
   late VoiceAssistantProvider _voiceProvider;
 
-  // Voice Recognition Module
-  // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-  static const String SERVER_URL = 'http://10.167.69.221:8000/transcribe/';
-  static const String DENOISE_URL = 'http://10.167.69.221:8000/denoise/';
-
-  final AudioRecorder _recorder = AudioRecorder();
-  final GeminiService _geminiService = GeminiService();
-  final DeviceInfoService _deviceInfo = DeviceInfoService();
+  final AudioProcessingService _audioProcessingService =
+      AudioProcessingService();
   String _transcription = "Press the mic to start speaking.";
   String _baseTranscription = "";
   String _fineTunedTranscription = "";
   String _geminiResponse = "";
 
-  Timer? _amplitudeTimer;
-  Timer? _silenceTimer;
-  double _lastAmplitude = -30.0;
-  double _currentAmplitude = -30.0;
-  bool _hasDetectedSpeech = false;
-  bool _isRecording = false;
-  int _silenceDuration = INITIAL_SILENCE_DURATION;
-  int _silenceCount = 0;
-  static const double SILENCE_THRESHOLD = 3.0;
-  static const double AMPLITUDE_CHANGE_THRESHOLD = 50.0; // 50% change threshold
-  static const int INITIAL_SILENCE_DURATION = 100;
-  static const int PRE_SPEECH_SILENCE_COUNT = 100; // Before speech detection
-  static const int POST_SPEECH_SILENCE_COUNT = 10; // After speech detection
-
   final Location _location = Location();
   LocationData? _currentPosition;
   String _country = "Unknown";
+
   final String _pickupLocation = "Sunway Pyramid Mall, PJ";
-  final String _pickupDetail = "Main entrance, near Starbucks";
   final String _destination = "KL Sentral, Kuala Lumpur";
   final String _paymentMethod = "Cash";
   final String _fareAmount = "RM 15.00";
@@ -130,6 +105,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _navigationSteps = [];
   Timer? _navigationUpdateTimer;
 
+  final DeviceInfoService _deviceInfoService = DeviceInfoService();
+
   @override
   void initState() {
     super.initState();
@@ -139,12 +116,40 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _setupVoiceButtonAnimation();
     _setupTimerAnimation();
     _initializeLocation();
+    _initializeAudioService();
     _initializeWakeWordDetection();
     _initializeTts();
-
-    // Set up location updates
     _setupLocationUpdates();
 
+    _audioProcessingService.onTranscriptionUpdate = (message) {
+      setState(() {
+        _transcription = message;
+      });
+    };
+
+    _audioProcessingService.onRecordingStateChanged = (isRecording) {
+      setState(() {
+        _isRecording = isRecording;
+      });
+    };
+
+    _audioProcessingService.onProcessingStateChanged = (isProcessing) {
+      setState(() {
+        _isProcessing = isProcessing;
+      });
+    };
+
+    _audioProcessingService.onTranscriptionComplete =
+        (baseText, enhancedText, geminiResponse) {
+      setState(() {
+        _baseTranscription = baseText;
+        _fineTunedTranscription = enhancedText;
+        _geminiResponse = geminiResponse;
+        _geminiStreamController.add(geminiResponse);
+      });
+
+      _speakResponse(geminiResponse);
+    };
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _positionVoiceButtonBottomRight();
@@ -171,6 +176,42 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       }
     });
   }
+
+Future<void> _initializeAudioService() async {
+  try {
+    await _audioProcessingService.initialize();
+    print('Audio service initialized successfully');
+  } catch (e) {
+    print('Error initializing audio service: $e');
+  }
+}
+
+// Replace _initializeLocation() with:
+Future<void> _initializeLocation() async {
+  bool initialized = await _deviceInfoService.initializeLocation();
+  if (initialized) {
+    // Get initial location
+    _currentPosition = await _deviceInfoService.getCurrentLocation();
+    
+    // Update UI with device context
+    final deviceContext = await _deviceInfoService.getDeviceContext();
+    setState(() {
+      _country = deviceContext['location'] ?? "Unknown";
+    });
+    
+    // Set up location change listener
+    _deviceInfoService.setupLocationListener((locationData) {
+      if (mounted) {
+        setState(() {
+          _currentPosition = locationData;
+        });
+        
+        // Update driver marker on the map
+        _updateDriverLocationMarker();
+      }
+    });
+  }
+}
 
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("en-US");
@@ -207,40 +248,65 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     await _flutterTts.speak(cleanText);
   }
 
-// Add this method to stop speaking
-  Future<void> _stopSpeaking() async {
-    print("Explicitly stopping TTS");
-    await _flutterTts.stop();
-    setState(() {
-      _isSpeaking = false;
-    });
+Future<void> _stopSpeaking() async {
+  print("Explicitly stopping TTS");
+  
+  try {
+    // Only try to stop if speaking
+    if (_isSpeaking) {
+      // Set flag first
+      setState(() {
+        _isSpeaking = false;
+      });
+      
+      // Then attempt to stop with timeout
+      await _flutterTts.stop().timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {
+          print("TTS stop timed out");
+          return;
+        }
+      );
+    }
+  } catch (e) {
+    print("Error stopping TTS: $e");
   }
-
+}
   @override
-  void dispose() {
-    WakeWordService.dispose(); // Add this line
+void dispose() {
+  // First stop any ongoing processes
+  try {
+    _flutterTts.stop();
+    _requestTimer?.cancel();
+  } catch (e) {
+    print("Error cancelling timers: $e");
+  }
+  
+  // Then dispose controllers and services
+  try {
+    _audioProcessingService.dispose();
+    WakeWordService.dispose();
     _geminiStreamController.close();
     _slideController.dispose();
     _requestCardController.dispose();
     _voiceButtonAnimController.dispose();
     _timerShakeController.dispose();
     _timerGlowController.dispose();
-    _requestTimer?.cancel();
     _mapController?.dispose();
     _voiceProvider.removeCommandCallback();
-    _flutterTts.stop();
-    _geminiStreamController.close();
-
-    super.dispose();
+  } catch (e) {
+    print("Error disposing resources: $e");
   }
-
+  
+  super.dispose();
+}
   Future<void> _initializeWakeWordDetection() async {
     try {
       print('Initializing wake word detection...');
 
       // Set up callback for wake word detection - only set it once
       WakeWordService.onWakeWordDetected = () {
-        print("🎙️ WAKE WORD DETECTED!");
+        print("WAKE WORD DETECTED!");
         if (mounted) {
           // Use a microtask to avoid calling setState during build
           Future.microtask(() {
@@ -279,37 +345,17 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   void _triggerVoiceAssistant() {
-    // This method will be called when the wake word is detected
-
     // Add visual feedback - briefly animate the mic button
     _voiceButtonAnimController.forward().then((_) {
       _voiceButtonAnimController.reverse();
     });
 
-    // Reset states first
-    _amplitudeTimer?.cancel();
-    try {
-      if (_isRecording) {
-        _recorder.stop();
-      }
-    } catch (e) {
-      print("No active recording to stop: $e");
-    }
-
-    // Set recording state
     setState(() {
-      _isRecording = true;
-      _isProcessing = false;
-      _hasDetectedSpeech = false;
-      _silenceCount = 0;
-      _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
-      _lastAmplitude = -30.0;
-      _currentAmplitude = -30.0;
       _geminiResponse = "";
     });
 
-    // Start recording
-    _startRecording();
+    // Start recording using the service
+    _audioProcessingService.startRecording();
     print("Wake word activated recording");
 
     // Show modal bottom sheet
@@ -321,11 +367,43 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       builder: (BuildContext context) {
         return _buildVoiceModal(context);
       },
-    ).whenComplete(() {
-      print("Modal dismissed - stopping TTS and calling abortRecord()");
-      // Stop TTS explicitly before aborting recording
-      _stopSpeaking();
-      abortRecord();
+    ).then((_) async {
+      print("Modal dismissed - starting cleanup sequence safely");
+
+      setState(() {
+        _isProcessing = false;
+      });
+      try {
+        // Step 1: Stop TTS with timeout
+        await _stopSpeaking().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            print(
+                "TTS stop timed out during modal dismissal, continuing cleanup");
+            return;
+          },
+        );
+
+        // Step 2: Abort recording after a short delay
+        // (giving the TTS system time to release resources)
+        await Future.delayed(const Duration(milliseconds: 300));
+
+        // Step 3: Abort recording
+        await _audioProcessingService.abortRecording().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            print("Recording abort timed out, continuing cleanup");
+            return;
+          },
+        );
+
+        print("Modal dismissal cleanup completed successfully");
+      } catch (e) {
+        print("Error during modal dismissal cleanup: $e");
+        // Don't rethrow - we want to continue even if there's an error
+      }
+    }).catchError((error) {
+      print("Fatal error during modal dismissal: $error");
     });
   }
 
@@ -591,549 +669,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
-  Future<void> _initializeLocation() async {
-    await _getCurrentLocation();
-    _updateDistanceInformation();
-  }
-
-  Future<String> _getTempFilePath() async {
-    final dir = await getTemporaryDirectory();
-    return p.join(dir.path, 'recorded_audio.wav'); // Changed from .m4a to .wav
-  }
-
-  Future<void> _startRecording() async {
-    try {
-      print('\n=== Starting Recording Process ===');
-
-      // Cancel any existing timers first
-      _amplitudeTimer?.cancel();
-      _amplitudeTimer = null;
-
-      if (!await _recorder.hasPermission()) {
-        throw Exception('Microphone permission denied');
-      }
-
-      final path = await _getTempFilePath();
-      print('Recording path: $path');
-
-      // Start recording with optimized settings
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          bitRate: 768000,
-          sampleRate: 48000,
-          numChannels: 2,
-        ),
-        path: path,
-      );
-
-      print('Recording started in mono WAV mode');
-
-      // Set recording state variables
-      setState(() {
-        _isRecording = true;
-        _hasDetectedSpeech = false;
-        _silenceCount = 0;
-        _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
-        _lastAmplitude = -30.0;
-        _currentAmplitude = -30.0;
-        _transcription = "Listening...";
-      });
-
-      print("Starting amplitude monitoring...");
-      _startAmplitudeMonitoring();
-    } catch (e) {
-      print('Error in _startRecording: $e');
-      setState(() {
-        _isRecording = false;
-        _transcription = "Error: Failed to start recording";
-      });
-      rethrow; // Important to propagate the error
-    }
-  }
-
-  void _startAmplitudeMonitoring() {
-    // Ensure we don't have multiple timers
-    _amplitudeTimer?.cancel();
-
-    int readingsToSkip = 2;
-    _amplitudeTimer =
-        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      if (!_isRecording) {
-        print("Recording stopped, cancelling amplitude timer");
-        timer.cancel();
-        return;
-      }
-
-      try {
-        final amplitude = await _recorder.getAmplitude();
-        double newAmplitude = amplitude.current;
-
-        // Skip invalid amplitude values
-        if (newAmplitude.isInfinite || newAmplitude.isNaN) {
-          print('⚠️ Skipping invalid amplitude value');
-          return;
-        }
-
-        setState(() {
-          _currentAmplitude = newAmplitude;
-        });
-
-        // Handle initial readings
-        if (readingsToSkip > 0) {
-          print('\n=== 🎤 Reading ${3 - readingsToSkip} Skipped ===');
-          print('Amplitude: ${_currentAmplitude.toStringAsFixed(2)} dB');
-          _lastAmplitude = _currentAmplitude;
-          readingsToSkip--;
-          return;
-        }
-
-        // Amplitude analysis
-        double percentageChange = 0.0;
-        if (_lastAmplitude.abs() > 0.001 && !_lastAmplitude.isInfinite) {
-          percentageChange =
-              ((_currentAmplitude - _lastAmplitude) / _lastAmplitude.abs()) *
-                  100;
-          percentageChange = percentageChange.clamp(-1000.0, 1000.0);
-
-          print('\n=== 🎙️ Amplitude Analysis ===');
-          print('Previous: ${_lastAmplitude.toStringAsFixed(2)} dB');
-          print('Current:  ${_currentAmplitude.toStringAsFixed(2)} dB');
-          print('Change:   ${percentageChange.toStringAsFixed(2)}%');
-          print('Silence:  $_silenceCount/$_silenceDuration');
-
-          // Speech detection
-          if (percentageChange.abs() > AMPLITUDE_CHANGE_THRESHOLD) {
-            if (!_hasDetectedSpeech) {
-              print(
-                  'Speech detected - Amplitude change: ${percentageChange.toStringAsFixed(2)}%');
-              setState(() {
-                _hasDetectedSpeech = true;
-                _silenceDuration = POST_SPEECH_SILENCE_COUNT;
-              });
-            }
-            _silenceCount = 0;
-          }
-          // Silence detection
-          else if (_currentAmplitude < SILENCE_THRESHOLD) {
-            _silenceCount++;
-            if (_silenceCount >= _silenceDuration) {
-              print('Recording stopped - Silence duration reached');
-              timer.cancel();
-              _stopAndSendRecording();
-            }
-          } else {
-            _silenceCount = 0;
-          }
-
-          _lastAmplitude = _currentAmplitude;
-        }
-      } catch (e) {
-        print('❌ Error in amplitude monitoring: $e');
-      }
-    });
-
-    print("Amplitude monitoring started");
-  }
-
-  Future<void> _stopAndSendRecording() async {
-    try {
-      print('\n=== Stopping Recording ===');
-      _silenceTimer?.cancel();
-
-      final path = await _recorder.stop();
-      setState(() {
-        _isRecording = false;
-        _isProcessing = true; // Set processing state
-      });
-
-      if (path == null) {
-        throw Exception('Recording stopped but no file path returned');
-      }
-
-      final file = File(path);
-      if (!await file.exists()) {
-        throw Exception('Recording file not found at: $path');
-      }
-
-      final fileSize = await file.length();
-      print('Recording stopped. File size: $fileSize bytes');
-
-      if (fileSize == 0) {
-        throw Exception('Recording file is empty');
-      }
-
-      setState(() => _transcription = "Processing audio...");
-      await _uploadAudio(file);
-    } catch (e) {
-      print('Error in _stopAndSendRecording: $e');
-      setState(() {
-        _transcription = "Error: Failed to process recording";
-        _isProcessing = false;
-      });
-    }
-  }
-
-  // Update the _uploadAudio method to handle denoising failures
-  Future<void> _uploadAudio(File file) async {
-    try {
-      print('\n=== Starting Audio Upload Process ===');
-      print('File details:');
-      print('- Path: ${file.path}');
-      print('- Exists: ${await file.exists()}');
-      print('- Size: ${await file.length()} bytes');
-
-      // Step 1: Denoising
-      print('\n=== Step 1: Audio Denoising ===');
-      List<int>? audioData = await _denoiseAudio(file);
-
-      if (audioData == null) {
-        print('Denoising failed, using original audio');
-        audioData = await file.readAsBytes();
-      }
-
-      // Step 2: Transcription
-      print('\n=== Step 2: Transcription ===');
-      await _transcribeAudio(audioData);
-    } catch (e, stackTrace) {
-      print('Error in audio processing:');
-      print('Error: $e');
-      print('Stack trace:\n$stackTrace');
-      setState(() {
-        _transcription = "Error: Failed to process audio";
-        _isProcessing = false;
-      });
-    }
-  }
-
-  Future<List<int>?> _denoiseAudio(File file) async {
-    int retryCount = 0;
-    const maxRetries = 3;
-    const retryDelay = Duration(seconds: 1);
-
-    while (retryCount < maxRetries) {
-      try {
-        print('\n=== Starting Denoising (Attempt ${retryCount + 1}) ===');
-        print('Input file details:');
-        print('- Path: ${file.path}');
-        final fileSize = await file.length();
-        print('- Size: $fileSize bytes');
-
-        if (fileSize == 0) {
-          throw Exception('Audio file is empty');
-        }
-
-        // Validate WAV file header
-        final bytes = await file.readAsBytes();
-        if (bytes.length < 44) {
-          throw Exception('Invalid WAV file: too small');
-        }
-
-        final request = http.MultipartRequest('POST', Uri.parse(DENOISE_URL));
-        // Second addition with same 'file' name
-        final audioFile = await http.MultipartFile.fromPath(
-          'file',
-          file.path,
-          contentType: MediaType('application', 'octet-stream'),
-        );
-        request.files.add(audioFile);
-
-        // Add error tracking headers
-        request.headers.addAll({
-          'X-Retry-Count': retryCount.toString(),
-          'X-Client-Version': '1.0.0',
-          'X-File-Size': fileSize.toString(),
-        });
-
-        print('Sending to denoising API...');
-        print('- File size: ${audioFile.length} bytes');
-        print('- Content type: ${audioFile.contentType}');
-        print('- Retry count: $retryCount');
-
-        final response = await request.send().timeout(
-              const Duration(seconds: 30),
-              onTimeout: () =>
-                  throw TimeoutException('Denoising request timed out'),
-            );
-
-        if (response.statusCode == 200) {
-          final denoisedAudio = await response.stream.toBytes();
-          print('Denoised audio received: ${denoisedAudio.length} bytes');
-
-          if (denoisedAudio.isEmpty) {
-            throw Exception('Received empty audio data');
-          }
-
-          return denoisedAudio;
-        } else {
-          final error = await response.stream.bytesToString();
-          throw Exception('Denoising failed (${response.statusCode}): $error');
-        }
-      } catch (e) {
-        print('Error in denoising (Attempt ${retryCount + 1}): $e');
-
-        if (retryCount < maxRetries - 1) {
-          print('Retrying in ${retryDelay.inSeconds} seconds...');
-          await Future.delayed(retryDelay);
-          retryCount++;
-        } else {
-          // If all retries failed, try to proceed without denoising
-          print(
-              'All denoising attempts failed. Proceeding with original audio...');
-          return await file.readAsBytes();
-        }
-      }
-    }
-
-    // If we reach here, all retries failed
-    return null;
-  }
-
-  Future<void> _transcribeAudio(List<int> audioData) async {
-    setState(() {
-      _isProcessing = true;
-      _transcription = "Processing audio...";
-    });
-
-    try {
-      print('Preparing transcription request...');
-      final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
-
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          audioData,
-          filename: 'denoised_audio.wav',
-          contentType: MediaType('audio', 'wav'),
-        ),
-      );
-
-      request.fields['country'] = _country;
-      print('Sending to transcription API...');
-      print('- Audio size: ${audioData.length} bytes');
-      print('- Country: $_country');
-
-      final response = await request.send();
-      final responseData = await http.Response.fromStream(response);
-
-      print('Transcription response received:');
-      print('- Status code: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final jsonResponse = json.decode(responseData.body);
-        print('Transcription successful:');
-        print('- Base model: ${jsonResponse['base_model']['text']}');
-        print(
-            '- Fine-tuned model: ${jsonResponse['fine_tuned_model']?['text']}');
-
-        // Get transcriptions
-        final baseText = jsonResponse['base_model']['text'];
-        final fineTunedText = jsonResponse['fine_tuned_model']?['text'] ??
-            "No fine-tuned model available for $_country";
-
-        // Get real-time device context
-        Map<String, dynamic> deviceContext =
-            await _deviceInfo.getDeviceContext();
-        print(deviceContext);
-
-        // Create Gemini prompt with dynamic device info
-        final prompt = '''
-        Transcript A (General Model): $baseText  
-        Transcript B (Local Model): $fineTunedText  
-
-        You are a smart, friendly voice assistant in a ride-hailing app. 
-        The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-        ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
-
-        Step 1:  
-        Briefly review both transcripts. If either contains relevant info about the driver's situation (e.g., plans, concerns, questions), use it.  
-        If the transcripts are unclear, irrelevant, or not related to driving, ignore them. Prioritize Transcript B if needed.
-
-        Step 2:  
-        Generate realistic driver and city data based on typical patterns and time of day:
-        - Total rides completed today (e.g., 3–10)
-        - Total earnings today (e.g., RM40–RM200)
-        - 3 nearby areas with random demand levels: High / Medium / Low
-        - Optional surge zone (1 area only, with 1.2x–1.8x multiplier)
-
-        Use the real-time device context:
-        - Location: ${_country}  
-        - Battery: ${deviceContext['battery']}  
-        - Network: ${deviceContext['network']}  
-        - Time: ${deviceContext['time']}  
-        - Weather: ${deviceContext['weather']}  
-
-        You are a smart, friendly voice assistant in a ride-hailing app. 
-        The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-        ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
-
-        ${_hasActiveRequest ? """
-        Current ride request details:
-        - Pickup: $_pickupLocation ($_pickupDetail)
-        - Destination: $_destination
-        - Payment method: $_paymentMethod
-        - Fare amount: $_fareAmount
-        - Trip distance: $_tripDistance
-        - Estimated pickup time: $_estimatedPickupTime
-        - Estimated trip duration: $_estimatedTripDuration
-        """ : ""}
-        Step 3:  
-        Create a short, natural-sounding assistant message using 2–4 of the most relevant details. You may include:
-        - Suggestions on where to go next
-        - Earnings or ride count updates
-        - Surge opportunities
-        - Battery or break reminders
-        - Weather or traffic tips
-        - Motivation
-
-        Message Rules:
-        - Only output step 3.
-        - Speak naturally, as if voiced in-app
-        - Don't repeat the same fact in different ways
-        - Only include useful, moment-relevant info
-        - Keep it under 3 sentences
-
-        Final Output:  
-        One friendly and helpful message that feels human and situation-aware.
-
-
-            ''';
-
-        print(prompt);
-        print('\nWaiting for Gemini response...');
-
-        final geminiResponse =
-            await _geminiService.generateOneTimeResponse(prompt);
-
-        print('\nGemini Response:');
-        print('----------------------------------------');
-        print(geminiResponse);
-
-        setState(() {
-          _baseTranscription = baseText;
-          _fineTunedTranscription = fineTunedText;
-          _geminiResponse = geminiResponse;
-          _geminiStreamController.add(geminiResponse);
-          _isProcessing = false; // Important to set this to false!
-        });
-
-        _speakResponse(geminiResponse);
-      } else {
-        throw Exception(
-            'Transcription failed: ${responseData.statusCode}\n${responseData.body}');
-      }
-    } catch (e) {
-      print('\n❌ Error in Gemini processing:');
-      print(e);
-      rethrow;
-    }
-    setState(() {
-      _isSpeaking = false;
-    });
-  }
-
-  Future<void> _handleLocationPermission() async {
-    bool serviceEnabled;
-    PermissionStatus permissionGranted;
-
-    serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) {
-        return;
-      }
-    }
-
-    permissionGranted = await _location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await _location.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) {
-        return;
-      }
-    }
-    await _location.changeSettings(
-      accuracy: LocationAccuracy
-          .high, // Use high accuracy instead of PRIORITY_HIGH_ACCURACY
-      interval: 10000, // Update interval in milliseconds
-      distanceFilter: 5, // Minimum distance in meters to trigger updates
-    );
-    try {
-      _currentPosition = await _location.getLocation();
-      print(
-          'Current position: ${_currentPosition?.latitude}, ${_currentPosition?.longitude}');
-
-      // Try to get the country name
-      if (_currentPosition != null) {
-        try {
-          final placemarks = await geocoding.placemarkFromCoordinates(
-            _currentPosition!.latitude!,
-            _currentPosition!.longitude!,
-          );
-
-          if (placemarks.isNotEmpty) {
-            setState(() {
-              _country = placemarks.first.country ?? "Unknown";
-              print('Country detected: $_country');
-            });
-          }
-        } catch (e) {
-          print('Error getting country: $e');
-        }
-      }
-    } catch (e) {
-      print('Error getting location: $e');
-    }
-  }
-
-  Future<void> _getCurrentLocation() async {
-    await _handleLocationPermission();
-
-    try {
-      final locationData = await _location.getLocation();
-      _currentPosition = locationData;
-
-      List<geocoding.Placemark> placemarks =
-          await geocoding.placemarkFromCoordinates(
-        locationData.latitude!,
-        locationData.longitude!,
-      );
-
-      if (placemarks.isNotEmpty) {
-        geocoding.Placemark place = placemarks[0];
-        String rawCountry = place.country ?? "Unknown";
-
-        final countryMapping = {
-          'Malaysia': 'Malaysia',
-          'Singapore': 'Singapore',
-          'Thailand': 'Thailand',
-          'Indonesia': 'Indonesia',
-        };
-
-        setState(() {
-          _country = countryMapping[rawCountry] ?? rawCountry;
-
-          // Update driver's current location marker
-          _updateDriverLocationMarker();
-
-          // Only center on first load when map is initialized,
-          // but don't move the camera on subsequent location updates
-          if (_mapController != null &&
-              !_mapInitialized &&
-              _currentPosition != null) {
-            _mapInitialized = true;
-            final driverPosition = LatLng(
-                _currentPosition!.latitude!, _currentPosition!.longitude!);
-
-            _mapController!.animateCamera(
-              CameraUpdate.newLatLng(driverPosition),
-            );
-          }
-        });
-      }
-    } catch (e) {
-      print('Error getting current location: $e');
-    }
-  }
 
   // Update this method to handle post-pickup navigation differently
   void _updateDriverLocationMarker() {
@@ -1207,44 +742,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   Future<void> abortRecord() async {
-    try {
-      print('\n=== Aborting Recording ===');
-      await _stopSpeaking();
-      // Cancel the amplitude timer to prevent memory leaks
-      _amplitudeTimer?.cancel();
-      _amplitudeTimer = null;
+    print('=== Aborting Recording ===');
 
-      // Stop the recording ONLY ONCE (remove the redundant code)
-      if (_isRecording) {
-        final path = await _recorder.stop();
+    await _stopSpeaking();
+    await _audioProcessingService.abortRecording();
 
-        // Delete the recorded file
-        if (path != null) {
-          final file = File(path);
-          if (await file.exists()) {
-            await file.delete();
-            print('Recording file deleted: $path');
-          }
-        }
-      }
-
-      // Reset all states
+    if (mounted) {
       setState(() {
-        _isRecording = false;
-        _isProcessing = false;
-        _hasDetectedSpeech = false;
-        _silenceCount = 0;
         _transcription = "Recording aborted.";
         _geminiResponse = "";
-        _isSpeaking = false;
-      });
-    } catch (e) {
-      print('Error in abortRecord: $e');
-      setState(() {
-        _isRecording = false;
-        _isProcessing = false;
-        _transcription = "Error: Failed to abort recording.";
-        _isSpeaking = false;
       });
     }
   }
@@ -2225,30 +1731,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             color: Colors.transparent,
             child: InkWell(
               onTap: () async {
-                // Reset states first
-                _amplitudeTimer?.cancel();
-                try {
-                  if (_isRecording) {
-                    await _recorder.stop();
-                  }
-                } catch (e) {
-                  print("No active recording to stop: $e");
-                }
-
-                // Important: set _isRecording BEFORE showing modal
                 setState(() {
-                  _isRecording = true;
                   _isProcessing = false;
-                  _hasDetectedSpeech = false;
-                  _silenceCount = 0;
-                  _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
-                  _lastAmplitude = -30.0;
-                  _currentAmplitude = -30.0;
                   _geminiResponse = ""; // Clear previous responses
                 });
 
                 try {
-                  await _startRecording();
+                  await _audioProcessingService.startRecording();
                   print("Recording started, amplitude monitoring should begin");
                 } catch (e) {
                   print("Error starting recording: $e");
@@ -2256,6 +1745,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     _isRecording = false;
                   });
                 }
+
                 // Show modal bottom sheet with a completely different approach
                 showModalBottomSheet(
                   context: context,
@@ -2519,46 +2009,46 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
-  // Add this new method to set up periodic location updates
-  void _setupLocationUpdates() {
-    // Set up location change listener
-    _location.onLocationChanged.listen((LocationData currentLocation) {
-      if (mounted) {
-        setState(() {
-          _currentPosition = currentLocation;
-        });
+// Add this new method to set up periodic location updates
+void _setupLocationUpdates() {
+  // Set up location change listener
+  _deviceInfoService.setupLocationListener((locationData) {
+    if (mounted) {
+      setState(() {
+        // Fix: Change 'currentLocation' to 'locationData'
+        _currentPosition = locationData;
+      });
 
-        // Update driver marker on the map if in navigation mode
-        if (_isNavigationMode && _mapController != null) {
-          _updateDriverLocationMarker();
+      // Update driver marker on the map if in navigation mode
+      if (_isNavigationMode && _mapController != null) {
+        _updateDriverLocationMarker();
 
-          // Calculate distance to pickup if navigating to pickup
-          if (_isNavigatingToPickup && _pickupLocationMarker != null) {
-            // Calculate distance between driver and pickup point
-            final driverLat = _currentPosition!.latitude!;
-            final driverLng = _currentPosition!.longitude!;
-            final pickupLat = _pickupLocationMarker!.position.latitude;
-            final pickupLng = _pickupLocationMarker!.position.longitude;
+        // Calculate distance to pickup if navigating to pickup
+        if (_isNavigatingToPickup && _pickupLocationMarker != null) {
+          // Calculate distance between driver and pickup point
+          final driverLat = _currentPosition!.latitude!;
+          final driverLng = _currentPosition!.longitude!;
+          final pickupLat = _pickupLocationMarker!.position.latitude;
+          final pickupLng = _pickupLocationMarker!.position.longitude;
 
-            // Simple distance calculation (not taking into account roads)
-            final distance =
-                calculateDistance(driverLat, driverLng, pickupLat, pickupLng);
+          // Simple distance calculation (not taking into account roads)
+          final distance =
+              calculateDistance(driverLat, driverLng, pickupLat, pickupLng);
 
-            setState(() {
-              _driverToPickupDistance = "${distance.toStringAsFixed(1)} km";
+          setState(() {
+            _driverToPickupDistance = "${distance.toStringAsFixed(1)} km";
 
-              // If driver is very close to pickup point, show pickup confirmation
-              if (distance < 0.1 && !_hasPickedUpPassenger) {
-                // Within 100 meters
-                _showPickupConfirmation();
-              }
-            });
-          }
+            // If driver is very close to pickup point, show pickup confirmation
+            if (distance < 0.1 && !_hasPickedUpPassenger) {
+              // Within 100 meters
+              _showPickupConfirmation();
+            }
+          });
         }
       }
-    });
-  }
-
+    }
+  });
+}
 // Helper method to calculate distance between two points
   double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
     const double earthRadius = 6371; // Radius of the earth in km

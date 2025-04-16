@@ -1,111 +1,205 @@
+import 'package:location/location.dart';
+import 'dart:io';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:intl/intl.dart';
-import 'dart:math';
+import 'package:geocoding/geocoding.dart' as geo;
 
 class DeviceInfoService {
+  // Services
+  final Location _location = Location();
   final Battery _battery = Battery();
   final Connectivity _connectivity = Connectivity();
-  
-  // Mock weather data - replace with actual API call in production
-  Map<String, String> _weatherCache = {};
-  final List<String> _weatherConditions = [
-    'Sunny', 'Partly cloudy', 'Cloudy', 'Light rain', 'Raining', 'Thunderstorms'
-  ];
-  final List<String> _temperatures = ['28°C', '29°C', '30°C', '31°C', '32°C', '27°C'];
-Future<Map<String, dynamic>> getDeviceContext() async {
-  // Get battery level
-  final batteryLevel = await _battery.batteryLevel;
-  
-  // Get battery charging state
-  final batteryState = await _battery.batteryState;
-  final isCharging = batteryState == BatteryState.charging || 
-                     batteryState == BatteryState.full;
-  
-  // Get network status
-  final connectivityResult = await _connectivity.checkConnectivity();
-  final networkStatus = _getNetworkStrength(connectivityResult);
+  final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
 
-  // Get current time
-  final now = DateTime.now();
-  final timeStr = DateFormat('h:mm a').format(now);
+  // Cached location data
+  LocationData? _currentPosition;
+  String _country = "Unknown";
+  bool _locationServiceEnabled = false;
 
-  // Get traffic condition based on time
-  final trafficCondition = _getTrafficCondition(now);
-  
-  // Get weather data
-  final weather = await _getWeatherData();
+  // Initialize location services and get permissions
+  Future<bool> initializeLocation() async {
+    try {
+      // Check if location service is enabled
+      _locationServiceEnabled = await _location.serviceEnabled();
+      if (!_locationServiceEnabled) {
+        _locationServiceEnabled = await _location.requestService();
+        if (!_locationServiceEnabled) {
+          print("Location services are disabled");
+          return false;
+        }
+      }
 
-  return {
-    'battery': '$batteryLevel%${isCharging ? " (Charging)" : ""}',
-    'network': networkStatus,
-    'time': '$timeStr, $trafficCondition traffic',
-    'weather': weather,
-  };
-}
+      // Check for location permission
+      PermissionStatus permissionStatus = await _location.hasPermission();
+      if (permissionStatus == PermissionStatus.denied) {
+        permissionStatus = await _location.requestPermission();
+        if (permissionStatus != PermissionStatus.granted) {
+          print("Location permission denied");
+          return false;
+        }
+      }
 
-  Future<String> _getWeatherData() async {
-    // In a real app, you would call a weather API here
-    // For now, we'll use mock data that changes based on time of day
-    
-    // Check if we have cached weather within the last hour
-    final now = DateTime.now();
-    final dateKey = '${now.year}-${now.month}-${now.day}-${now.hour}';
-    
-    if (_weatherCache.containsKey(dateKey)) {
-      return _weatherCache[dateKey]!;
+      // Configure location settings
+      await _location.changeSettings(
+        accuracy: LocationAccuracy.high,
+        interval: 10000, // 10 seconds
+        distanceFilter: 10, // 10 meters
+      );
+
+      // Get initial location
+      _currentPosition = await _location.getLocation();
+
+      // Get country from coordinates
+      _country = await _getCountryFromCoordinates(
+          _currentPosition?.latitude ?? 0.0,
+          _currentPosition?.longitude ?? 0.0);
+
+      print("Location initialized: $_country");
+      return true;
+    } catch (e) {
+      print("Error initializing location: $e");
+      return false;
     }
-    
-    // Generate weather based on time of day
-    final random = Random();
-    int index;
-    
-    if (now.hour >= 6 && now.hour < 11) {
-      // Morning - more likely to be clear
-      index = random.nextInt(3); // First 3 conditions
-    } else if (now.hour >= 11 && now.hour < 15) {
-      // Midday - could be anything
-      index = random.nextInt(_weatherConditions.length);
-    } else if (now.hour >= 15 && now.hour < 19) {
-      // Afternoon - more likely to rain
-      index = 2 + random.nextInt(4); // Last 4 conditions
-    } else {
-      // Evening/night
-      index = random.nextInt(_weatherConditions.length);
-    }
-    
-    final tempIndex = random.nextInt(_temperatures.length);
-    final weather = "${_weatherConditions[index]}, ${_temperatures[tempIndex]}";
-    
-    // Cache the result
-    _weatherCache[dateKey] = weather;
-    
-    return weather;
   }
 
-  String _getNetworkStrength(ConnectivityResult result) {
-    // Existing method implementation
+  // Get the current location
+  Future<LocationData?> getCurrentLocation() async {
+    try {
+      _currentPosition = await _location.getLocation();
+      return _currentPosition;
+    } catch (e) {
+      print("Error getting current location: $e");
+      return null;
+    }
+  }
+
+  Future<String> _getCountryFromCoordinates(
+      double latitude, double longitude) async {
+    try {
+      if (latitude == 0.0 && longitude == 0.0) {
+        return "Malaysia"; // Default for your app's context
+      }
+
+      print('Getting country from coordinates: $latitude, $longitude');
+
+      try {
+        // Use geo. prefix for placemarkFromCoordinates
+        List<geo.Placemark> placemarks =
+            await geo.placemarkFromCoordinates(latitude, longitude);
+
+        if (placemarks.isNotEmpty &&
+            placemarks.first.country != null &&
+            placemarks.first.country!.isNotEmpty) {
+          print('Found country: ${placemarks.first.country}');
+          return placemarks.first.country!;
+        }
+
+        // Fallback if geocoding gives empty result
+        return "Malaysia"; // Default for your app's context
+      } catch (e) {
+        print('Error in geocoding: $e');
+        return "Malaysia"; // Default fallback
+      }
+    } catch (e) {
+      print('Error getting country from coordinates: $e');
+      return "Malaysia"; // Default fallback
+    }
+  }
+
+  // Setup location change listener
+  void setupLocationListener(Function(LocationData) onLocationChanged) {
+    _location.onLocationChanged.listen((LocationData currentLocation) {
+      _currentPosition = currentLocation;
+      onLocationChanged(currentLocation);
+    });
+  }
+
+  // Get device context (all device info in one call)
+  Future<Map<String, dynamic>> getDeviceContext() async {
+    Map<String, dynamic> context = {};
+
+    try {
+      if (_country == "Unknown") {
+        print('Country is unknown, attempting to initialize location...');
+        await initializeLocation();
+      }
+
+      // Get battery level
+      final batteryLevel = await _battery.batteryLevel;
+      context['battery'] = "$batteryLevel%";
+
+      // Get connectivity status
+      final connectivityResult = await _connectivity.checkConnectivity();
+      context['network'] = _getNetworkType(connectivityResult);
+
+      // Get current time
+      final now = DateTime.now();
+      context['time'] = DateFormat('h:mm a').format(now);
+
+      // Get weather (mock for now)
+      context['weather'] = "Clear";
+
+      // Get location from cached values
+      if (_country != "Unknown") {
+        context['location'] = _country;
+        print('Using cached country: $_country');
+      } else {
+        // Try to get location one more time
+        try {
+          final position = await _location.getLocation();
+          if (position.latitude != null && position.longitude != null) {
+            _country = await _getCountryFromCoordinates(
+                position.latitude ?? 0.0, position.longitude ?? 0.0);
+            context['location'] = _country;
+            print('Got country from fresh coordinates: $_country');
+          } else {
+            // Last resort: use a hardcoded value based on device locale
+            context['location'] = "Malaysia"; // Default for your app's context
+            print('Using hardcoded country as last resort');
+          }
+        } catch (e) {
+          print('Error getting fresh location: $e');
+          context['location'] = "Malaysia"; // Default fallback
+        }
+      }
+
+      // Get device info
+      if (Platform.isAndroid) {
+        final androidInfo = await _deviceInfo.androidInfo;
+        context['device'] = "${androidInfo.model}";
+      }
+
+      return context;
+    } catch (e) {
+      print("Error gathering device context: $e");
+      return {
+        'battery': "75%",
+        'network': "Cellular",
+        'time': DateFormat('h:mm a').format(DateTime.now()),
+        'weather': "Clear",
+        'location': _country,
+        'device': "Android"
+      };
+    }
+  }
+
+  // Helper method to convert connectivity result to readable string
+  String _getNetworkType(ConnectivityResult result) {
     switch (result) {
       case ConnectivityResult.mobile:
-        return 'Strong (4G)';
+        return "Cellular";
       case ConnectivityResult.wifi:
-        return 'Strong (WiFi)';
+        return "WiFi";
+      case ConnectivityResult.ethernet:
+        return "Ethernet";
+      case ConnectivityResult.bluetooth:
+        return "Bluetooth";
       case ConnectivityResult.none:
-        return 'No Connection';
+        return "Offline";
       default:
-        return 'Unknown';
-    }
-  }
-
-  String _getTrafficCondition(DateTime time) {
-    // Existing method implementation
-    final hour = time.hour;
-    if ((hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19)) {
-      return 'heavy';
-    } else if ((hour >= 10 && hour <= 16) || (hour >= 20 && hour <= 22)) {
-      return 'moderate';
-    } else {
-      return 'light';
+        return "Unknown";
     }
   }
 }
