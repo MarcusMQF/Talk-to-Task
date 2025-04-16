@@ -19,6 +19,8 @@ import 'package:http_parser/http_parser.dart';
 import '../services/gemini_service.dart';
 import '../services/wake_word.dart';
 import '../services/get_device_info.dart';
+import '../services/weather_service.dart';
+import '../widgets/animated_weather_indicator.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'dart:typed_data';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -74,13 +76,19 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   late Animation<double> _timerShakeAnimation;
   late Animation<double> _timerGlowAnimation;
 
+  // Weather related properties
+  final WeatherService _weatherService = WeatherService();
+  bool _isLoadingWeather = false;
+  Map<String, dynamic>? _weatherData;
+  Timer? _weatherUpdateTimer;
+
   // Store provider reference for safe disposal
   late VoiceAssistantProvider _voiceProvider;
 
   // Voice Recognition Module
   // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-  static const String SERVER_URL = 'http://10.167.69.221:8000/transcribe/';
-  static const String DENOISE_URL = 'http://10.167.69.221:8000/denoise/';
+  static const String SERVER_URL = 'http://10.167.64.239:8000/transcribe/';
+  static const String DENOISE_URL = 'http://10.167.64.239:8000/denoise/';
 
   final AudioRecorder _recorder = AudioRecorder();
   final GeminiService _geminiService = GeminiService();
@@ -144,6 +152,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
     // Set up location updates
     _setupLocationUpdates();
+    
+    // Set up weather updates
+    _setupWeatherUpdates();
 
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -225,13 +236,61 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _voiceButtonAnimController.dispose();
     _timerShakeController.dispose();
     _timerGlowController.dispose();
+    _amplitudeTimer?.cancel();
+    _silenceTimer?.cancel();
     _requestTimer?.cancel();
+    _navigationUpdateTimer?.cancel();
+    _weatherUpdateTimer?.cancel();
     _mapController?.dispose();
     _voiceProvider.removeCommandCallback();
     _flutterTts.stop();
     _geminiStreamController.close();
 
     super.dispose();
+  }
+  
+  // Fetch weather data for current location
+  Future<void> _fetchWeatherData() async {
+    if (_currentPosition == null) {
+      print('Cannot fetch weather: Current position is null');
+      return;
+    }
+    
+    print('Fetching weather for location: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+    
+    setState(() {
+      _isLoadingWeather = true;
+    });
+    
+    try {
+      final weatherData = await _weatherService.getWeatherByLocation(
+        _currentPosition!.latitude!,
+        _currentPosition!.longitude!
+      );
+      
+      setState(() {
+        _weatherData = weatherData;
+        _isLoadingWeather = false;
+      });
+      
+      print('Weather fetched: ${weatherData['main']} - ${weatherData['emoji']} - ${weatherData['temperature']}°C');
+    } catch (e) {
+      setState(() {
+        _isLoadingWeather = false;
+      });
+      print('Error fetching weather: $e');
+    }
+  }
+  
+  // Setup periodic weather updates
+  void _setupWeatherUpdates() {
+    // Initial fetch
+    _fetchWeatherData();
+    
+    // Update weather every 15 minutes
+    _weatherUpdateTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      _fetchWeatherData();
+    });
   }
 
   Future<void> _initializeWakeWordDetection() async {
@@ -1938,7 +1997,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
     return Positioned(
       right: 16,
-      top: 130,
+      top: 145,
       child: Column(
         children: [
           // My location button - separated with its own container
@@ -1958,41 +2017,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: () {
-                  if (_mapController != null && _currentPosition != null) {
-                    // Use driver's actual position from current location
-                    final driverPosition = LatLng(_currentPosition!.latitude!,
-                        _currentPosition!.longitude!);
-
-                    // If there's an active request/order, move the map view higher
-                    if (_hasActiveRequest) {
-                      final adjustedPosition = LatLng(
-                          driverPosition.latitude -
-                              0.005, // Move up by 0.005 on the map
-                          driverPosition.longitude);
-
-                      _mapController!.animateCamera(
-                        CameraUpdate.newCameraPosition(
-                          CameraPosition(
-                            target: adjustedPosition,
-                            zoom:
-                                16, // Increased zoom level for better detail with order container
-                          ),
-                        ),
-                      );
-                    } else {
-                      // Center on driver's location normally
-                      _mapController!.animateCamera(
-                        CameraUpdate.newCameraPosition(
-                          CameraPosition(
-                            target: driverPosition,
-                            zoom: 15,
-                          ),
-                        ),
-                      );
-                    }
-                  }
-                },
+                onTap: _moveToCurrentLocation,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: const EdgeInsets.all(8),
@@ -2076,6 +2101,43 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
+  // Build weather indicator positioned on the left side
+  Widget _buildWeatherIndicator() {
+    return Positioned(
+      left: 16,
+      top: 140,
+      child: _isLoadingWeather
+          ? Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.8),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.grey),
+                ),
+              ),
+            )
+          : _weatherData == null
+              ? const SizedBox.shrink()
+              : AnimatedWeatherIndicator(
+                  weatherEmoji: _weatherData!['emoji'],
+                  weatherCondition: _weatherData!['main'],
+                ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2098,11 +2160,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             compassEnabled: true,
           ),
           _buildOnlineToggle(),
+          // Weather indicator
+          _buildWeatherIndicator(),
           // Country flag indicator - hide during navigation mode
           if (!_isNavigationMode)
             Positioned(
-              top: 56,
-              left: 25,
+              top: 52,
+              left: 15,
               child: GestureDetector(
                 onTap: () {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -2110,8 +2174,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   );
                 },
                 child: Container(
-                  width: 35,
-                  height: 35,
+                  width: 39,
+                  height: 39,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(20),
                     color: Colors.white,
@@ -2521,12 +2585,33 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Add this new method to set up periodic location updates
   void _setupLocationUpdates() {
+    // Variables to track significant location change
+    double lastLat = 0;
+    double lastLng = 0;
+    bool isFirstUpdate = true;
+    
     // Set up location change listener
     _location.onLocationChanged.listen((LocationData currentLocation) {
       if (mounted) {
         setState(() {
           _currentPosition = currentLocation;
         });
+        
+        // Check if location has changed significantly (more than 500 meters)
+        // or if it's the first update
+        final currentLat = currentLocation.latitude!;
+        final currentLng = currentLocation.longitude!;
+        
+        if (isFirstUpdate || 
+            calculateDistance(lastLat, lastLng, currentLat, currentLng) > 0.5) {
+          // Update last position
+          lastLat = currentLat;
+          lastLng = currentLng;
+          isFirstUpdate = false;
+          
+          // Fetch weather for new location
+          _fetchWeatherData();
+        }
 
         // Update driver marker on the map if in navigation mode
         if (_isNavigationMode && _mapController != null) {
@@ -3779,5 +3864,45 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
 
     await _flutterTts.speak(speechText);
+  }
+
+  // Updated method to move to current location and update weather
+  void _moveToCurrentLocation() {
+    if (_mapController != null && _currentPosition != null) {
+      // Use driver's actual position from current location
+      final driverPosition = LatLng(_currentPosition!.latitude!,
+          _currentPosition!.longitude!);
+
+      // If there's an active request/order, move the map view higher
+      if (_hasActiveRequest) {
+        final adjustedPosition = LatLng(
+            driverPosition.latitude -
+                0.005, // Move up by 0.005 on the map
+            driverPosition.longitude);
+
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: adjustedPosition,
+              zoom:
+                  16, // Increased zoom level for better detail with order container
+            ),
+          ),
+        );
+      } else {
+        // Center on driver's location normally
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: driverPosition,
+              zoom: 15,
+            ),
+          ),
+        );
+      }
+      
+      // Update weather data for current location
+      _fetchWeatherData();
+    }
   }
 }

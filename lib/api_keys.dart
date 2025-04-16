@@ -6,4 +6,7 @@ class ApiKeys {
     
   static String get geminiApiKey =>
     dotenv.env['GEMINI_API_KEY'] ?? '';
+    
+  static String get openWeatherApiKey =>
+    dotenv.env['OPEN_WEATHER_API_KEY'] ?? '';
 }
