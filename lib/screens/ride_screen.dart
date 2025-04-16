@@ -2104,7 +2104,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Build weather indicator positioned on the left side
   Widget _buildWeatherIndicator() {
     return Positioned(
-      left: 16,
+      left: 20,
       top: 140,
       child: _isLoadingWeather
           ? Container(
@@ -2121,8 +2121,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 ],
               ),
               child: const SizedBox(
-                width: 18,
-                height: 18,
+                width: 15,
+                height: 15,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.grey),
@@ -2166,7 +2166,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           if (!_isNavigationMode)
             Positioned(
               top: 52,
-              left: 15,
+              left: 20,
               child: GestureDetector(
                 onTap: () {
                   ScaffoldMessenger.of(context).showSnackBar(
