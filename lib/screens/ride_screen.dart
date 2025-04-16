@@ -227,10 +227,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _timerGlowController.dispose();
     _requestTimer?.cancel();
     _mapController?.dispose();
-    // Use stored reference instead of accessing through context
     _voiceProvider.removeCommandCallback();
     _flutterTts.stop();
-    WakeWordService.dispose();
     _geminiStreamController.close();
 
     super.dispose();
@@ -252,7 +250,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       try {
         final ByteData data = await rootBundle.load('assets/hey_grab.ppn');
         print(
-            '✅ PPN file loaded successfully! Size: ${data.lengthInBytes} bytes');
+            '✅ PPC file loaded successfully! Size: ${data.lengthInBytes} bytes');
       } catch (e) {
         print('❌ Failed to load PPN file: $e');
         print(
