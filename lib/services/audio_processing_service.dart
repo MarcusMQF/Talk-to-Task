@@ -20,8 +20,8 @@ class AudioProcessingService {
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
   // Server URLs
-  static const String SERVER_URL = 'http://10.10.15.161:8000/transcribe';
-  static const String DENOISE_URL = 'http://10.10.15.161:8000/denoise';
+  static const String SERVER_URL = 'http://192.168.159.244:8000/transcribe';
+  static const String DENOISE_URL = 'http://192.168.159.244:8000/denoise';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
