@@ -61,21 +61,21 @@ Talk To Task implements a sophisticated five-stage voice processing pipeline:
 ```mermaid
 graph TD
     A[Voice Detection] --> B[Audio Denoising]
-    B --> C[Audio Transcribing\nvia FastAPI]
-    B --> D[RNNoise via\nfastAPI]
+    B --> C[Audio Transcribing via FastAPI]
+    B --> D[RNNoise via fastAPI]
     C --> E[AI Processing]
     E --> F[Output]
     E --> G[Grab's own API]
     E --> H[Google Gemini API]
     
     I[Silence Detection] --> A
-    J[Active Detection\n(Wake Word\nDetection)] --> A
-    K[Passive Detection\n(Physical Button)] --> A
+    J[Active Detection - Wake Word Detection] --> A
+    K[Passive Detection - Physical Button] --> A
     
-    L[Fine-Tuned Whisper\nModel\n(from huggingface)] --> C
-    M[General Whisper\nModel\n(from OpenAI)] --> C
+    L[Fine-Tuned Whisper Model from huggingface] --> C
+    M[General Whisper Model from OpenAI] --> C
     
-    F --> N[Text-To-Speech\nby Flutter-TTS]
+    F --> N[Text-To-Speech by Flutter-TTS]
 ```
 
 ## 🛠️ Tech Stack
