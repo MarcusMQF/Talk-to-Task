@@ -217,14 +217,30 @@ class _AIChatScreenState extends State<AIChatScreen> with SingleTickerProviderSt
             Navigator.of(context).pop();
           },
         ),
-        title: const Text('AI Assistant'),
+        title: Text(
+          'AI Assistant',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         backgroundColor: AppTheme.grabGreen,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bookmark_border),
-            onPressed: () {},
+          // Theme toggle button
+          GestureDetector(
+            onTap: () {
+              themeProvider.toggleTheme();
+            },
+            child: Container(
+              padding: const EdgeInsets.all(8.0),
+              child: Icon(
+                themeProvider.isDarkMode ? Icons.light_mode : Icons.dark_mode,
+                color: Colors.white,
+              ),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.more_vert),
@@ -429,8 +445,8 @@ class _AIChatScreenState extends State<AIChatScreen> with SingleTickerProviderSt
                           fillColor: Colors.transparent,
                           filled: true,
                         ),
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black,
+                        style: const TextStyle(
+                          color: Colors.black,
                         ),
                         onSubmitted: (value) {
                           _sendMessage(value);

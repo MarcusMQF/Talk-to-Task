@@ -3,32 +3,18 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:location/location.dart';
 import 'package:geocoding/geocoding.dart' as geo;
+import 'package:flutter/foundation.dart';
+import './weather_service.dart'; // Import the real weather service
 
-import 'dart:math';
 
 class DeviceInfoService {
   final Battery _battery = Battery();
   final Connectivity _connectivity = Connectivity();
   final Location _location = Location();
+  final WeatherService _weatherService = WeatherService(); // Add real weather service
   LocationData? _currentPosition;
-  // Mock weather data - replace with actual API call in production
+  // Cache for weather data
   Map<String, String> _weatherCache = {};
-  final List<String> _weatherConditions = [
-    'Sunny',
-    'Partly cloudy',
-    'Cloudy',
-    'Light rain',
-    'Raining',
-    'Thunderstorms'
-  ];
-  final List<String> _temperatures = [
-    '28°C',
-    '29°C',
-    '30°C',
-    '31°C',
-    '32°C',
-    '27°C'
-  ];
   String _country = "Unknown";
   Future<bool> initializeLocation() async {
     try {
@@ -124,7 +110,7 @@ class DeviceInfoService {
     // Get traffic condition based on time
     final trafficCondition = _getTrafficCondition(now);
 
-    // Get weather data
+    // Get real weather data
     final weather = await _getWeatherData();
 
     return {
@@ -136,42 +122,42 @@ class DeviceInfoService {
   }
 
   Future<String> _getWeatherData() async {
-    // In a real app, you would call a weather API here
-    // For now, we'll use mock data that changes based on time of day
+    try {
+      // Check if we have cached weather within the last 15 minutes
+      final now = DateTime.now();
+      final dateKey = '${now.year}-${now.month}-${now.day}-${now.hour}-${now.minute ~/ 15}';
 
-    // Check if we have cached weather within the last hour
-    final now = DateTime.now();
-    final dateKey = '${now.year}-${now.month}-${now.day}-${now.hour}';
+      if (_weatherCache.containsKey(dateKey)) {
+        debugPrint('Using cached weather data');
+        return _weatherCache[dateKey]!;
+      }
 
-    if (_weatherCache.containsKey(dateKey)) {
-      return _weatherCache[dateKey]!;
+      // Make sure we have location data
+      if (_currentPosition == null || 
+          _currentPosition!.latitude == null || 
+          _currentPosition!.longitude == null) {
+        debugPrint('Location data not available for weather');
+        return "Weather unavailable";
+      }
+      
+      // Use the real WeatherService to get actual weather data
+      final weatherData = await _weatherService.getWeatherByLocation(
+        _currentPosition!.latitude!,
+        _currentPosition!.longitude!
+      );
+      
+      // Format the weather data
+      final formattedWeather = "${weatherData['main']}, ${weatherData['temperature'].toStringAsFixed(1)}°C";
+      debugPrint('Got real weather data: $formattedWeather');
+      
+      // Cache the result for 15 minutes
+      _weatherCache[dateKey] = formattedWeather;
+      
+      return formattedWeather;
+    } catch (e) {
+      debugPrint('Error fetching real weather data: $e');
+      return "Weather unavailable";
     }
-
-    // Generate weather based on time of day
-    final random = Random();
-    int index;
-
-    if (now.hour >= 6 && now.hour < 11) {
-      // Morning - more likely to be clear
-      index = random.nextInt(3); // First 3 conditions
-    } else if (now.hour >= 11 && now.hour < 15) {
-      // Midday - could be anything
-      index = random.nextInt(_weatherConditions.length);
-    } else if (now.hour >= 15 && now.hour < 19) {
-      // Afternoon - more likely to rain
-      index = 2 + random.nextInt(4); // Last 4 conditions
-    } else {
-      // Evening/night
-      index = random.nextInt(_weatherConditions.length);
-    }
-
-    final tempIndex = random.nextInt(_temperatures.length);
-    final weather = "${_weatherConditions[index]}, ${_temperatures[tempIndex]}";
-
-    // Cache the result
-    _weatherCache[dateKey] = weather;
-
-    return weather;
   }
 
   String _getNetworkStrength(ConnectivityResult result) {
