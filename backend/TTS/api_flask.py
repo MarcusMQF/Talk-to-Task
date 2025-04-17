@@ -40,6 +40,10 @@ def text_to_speech(text, lang=DEFAULT_LANGUAGE):
         print(f"TTS error: {e}")
         return None
 
+@app.route('/tts', methods=['GET'])
+def tts_health_check():
+    return jsonify({"message": "TTS API is up. Use POST to send text."}), 200
+
 @app.route('/tts', methods=['POST'])
 def tts_endpoint():
     data = request.get_json()
