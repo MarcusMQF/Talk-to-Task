@@ -383,11 +383,20 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     print("Wake word activated recording");
 
     // Show modal bottom sheet
+    // Get theme mode first
+    // ignore: unused_local_variable
+    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isDismissible: true,
       enableDrag: true,
+      isScrollControlled: true, // Allow more height control
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
+      ),
       builder: (BuildContext context) {
         return _buildVoiceModal(context);
       },
@@ -2371,11 +2380,20 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   });
                 }
                 // Show modal bottom sheet with a completely different approach
+                // Get theme mode first
+                // ignore: unused_local_variable
+                final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
                 showModalBottomSheet(
                   context: context,
                   backgroundColor: Colors.transparent,
                   isDismissible: true,
                   enableDrag: true,
+                  isScrollControlled: true, // Allow more height control
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(20),
+                    ),
+                  ),
                   builder: (BuildContext context) {
                     return _buildVoiceModal(context);
                   },
@@ -2405,6 +2423,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
 // Extract the modal into a separate method
   Widget _buildVoiceModal(BuildContext context) {
+    // Get theme provider to check dark mode status
+    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+    
     return StatefulBuilder(
       builder: (BuildContext context, StateSetter modalSetState) {
         // This function will refresh the modal with current state
@@ -2425,9 +2446,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             return Container(
               width: double.infinity,
               height: 300,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(
+              decoration: BoxDecoration(
+                color: isDarkMode ? const Color(0xFF252525) : Colors.white,
+                borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(20),
                 ),
               ),
@@ -2445,28 +2466,28 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                         const SizedBox(height: 16),
                         Text(
                           _transcription,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w500,
-                            color: Colors.grey,
+                            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                           ),
                         ),
                       ],
                     )
                   else if (_isProcessing)
-                    const Column(
+                    Column(
                       children: [
-                        CircularProgressIndicator(
+                        const CircularProgressIndicator(
                           valueColor:
                               AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
                         ),
-                        SizedBox(height: 12),
+                        const SizedBox(height: 12),
                         Text(
                           "Processing...",
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w500,
-                            color: Colors.grey,
+                            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                           ),
                         ),
                       ],
@@ -2479,19 +2500,19 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             if (_baseTranscription.isNotEmpty) ...[
-                              const Text(
+                              Text(
                                 "Your speech:",
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey,
+                                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700,
                                 ),
                               ),
                               Text(
                                 _baseTranscription,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
-                                  color: Colors.grey,
+                                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700,
                                   fontStyle: FontStyle.italic,
                                 ),
                               ),
@@ -2500,12 +2521,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                             if (_fineTunedTranscription.isNotEmpty &&
                                 _fineTunedTranscription !=
                                     _baseTranscription) ...[
-                              const Text(
+                              Text(
                                 "Enhanced recognition:",
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey,
+                                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700,
                                 ),
                               ),
                               Text(
@@ -2520,9 +2541,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                             ],
                             Text(
                               snapshot.data!,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 16,
-                                color: Colors.grey,
+                                color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                                 height: 1.5,
                               ),
                             ),
@@ -2531,11 +2552,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                       ),
                     )
                   else
-                    const Text(
+                    Text(
                       "No data available",
                       style: TextStyle(
                         fontSize: 16,
-                        color: Colors.grey,
+                        color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                       ),
                     ),
                 ],
@@ -2597,24 +2618,111 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   void _showCancelConfirmation() {
+    // Get theme mode
+    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Cancel Ride?'),
-        content: const Text(
-            'Are you sure you want to cancel this ride? This may affect your cancellation rate.'),
+        backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
+        title: Text('Cancel Trip?', 
+          style: TextStyle(
+            color: isDarkMode ? Colors.white : Colors.black,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to cancel this trip? This will end the current navigation.',
+          style: TextStyle(
+            color: isDarkMode ? Colors.grey.shade300 : Colors.black87,
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('NO'),
+            child: Text('NO', style: TextStyle(color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700)),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('YES'),
+            onPressed: () {
+              Navigator.pop(context);
+              _cancelTrip(); // Use _cancelTrip instead of _endTrip
+            },
+            child: Text('YES', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
+  }
+
+  // Method to cancel the trip and exit navigation mode
+  void _cancelTrip() {
+    // Speak confirmation of cancellation
+    _speakResponse("Trip cancelled.");
+    
+    setState(() {
+      _isNavigationMode = false;
+      _isNavigatingToPickup = false;
+      _isNavigatingToDestination = false;
+      _hasPickedUpPassenger = false;
+      _navigationSteps.clear();
+      _currentNavigationStep = 0;
+
+      // Clear navigation route
+      _polylines.clear();
+
+      // Reset markers except for driver location
+      _markers.clear();
+      if (_driverLocationMarker != null) {
+        _markers.add(_driverLocationMarker!);
+      }
+    });
+
+    // Focus back on device's current location
+    if (_mapController != null && _currentPosition != null) {
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
+      // Animate camera to focus on driver's current location with appropriate zoom level
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: driverPosition,
+            zoom: 15, // Standard zoom level for city navigation
+          ),
+        ),
+      );
+    }
+
+    // Show cancellation message
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Trip cancelled'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Colors.red,
+      ),
+    );
+    
+    // Make driver available for new passenger requests
+    if (_isOnline) {
+      // Show a brief message to indicate the driver is available for new orders
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ready for new passenger'),
+              duration: Duration(seconds: 2),
+              backgroundColor: AppTheme.grabGreen,
+            ),
+          );
+        }
+      });
+      
+      // Show a new order request after a short delay
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _isOnline) {
+          _showNewRequest();
+        }
+      });
+    }
   }
 
   // Method to position voice button at bottom right
@@ -2983,7 +3091,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               TextButton.icon(
                 onPressed: () {
                   Navigator.pop(context);
-                  _showCancelConfirmation();
+                  _cancelTrip();
                 },
                 icon: const Icon(Icons.cancel, color: Colors.red),
                 label: const Text(
@@ -3484,23 +3592,35 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   // Exit navigation button
                   GestureDetector(
                     onTap: () {
+                      // Get theme mode
+                      final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+                      
                       showDialog(
                         context: context,
                         builder: (context) => AlertDialog(
-                          title: const Text('Exit Navigation?'),
-                          content: const Text(
-                              'Are you sure you want to exit navigation?'),
+                          backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
+                          title: Text('Cancel Trip?', 
+                            style: TextStyle(
+                              color: isDarkMode ? Colors.white : Colors.black,
+                            ),
+                          ),
+                          content: Text(
+                            'Are you sure you want to cancel this trip? This will end the current navigation.',
+                            style: TextStyle(
+                              color: isDarkMode ? Colors.grey.shade300 : Colors.black87,
+                            ),
+                          ),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context),
-                              child: const Text('NO'),
+                              child: Text('NO', style: TextStyle(color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700)),
                             ),
                             TextButton(
                               onPressed: () {
                                 Navigator.pop(context);
-                                _endTrip();
+                                _cancelTrip(); // Use _cancelTrip instead of _endTrip
                               },
-                              child: const Text('YES'),
+                              child: Text('YES', style: TextStyle(color: Colors.red)),
                             ),
                           ],
                         ),

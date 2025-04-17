@@ -28,8 +28,6 @@
 - 🌓 **Adaptive Dark Mode** - Reduce eye strain during night driving with smart theme switching
 - 🔊 **Noise-Cancelling Audio** - Advanced audio processing for clear voice recognition in noisy environments
 - 💬 **Passenger Communication** - Handle calls and messages through voice commands
-- 📊 **Ride Analytics** - Track performance metrics through voice queries
-- ⚡ **Offline Capability** - Core functionality available without internet connection
 
 ## 🗣️ Voice Command System
 
@@ -56,6 +54,29 @@ Talk To Task implements a sophisticated five-stage voice processing pipeline:
 5. **Natural Response** - Human-like interaction:
    - Natural voice synthesis with appropriate intonation
    - Multilingual support for diverse passenger interactions
+
+<a name="solution-architecture"></a>
+## 💡Solution Architecture  
+
+```mermaid
+graph TD
+    A[Voice Detection] --> B[Audio Denoising]
+    B --> C[Audio Transcribing\nvia FastAPI]
+    B --> D[RNNoise via\nfastAPI]
+    C --> E[AI Processing]
+    E --> F[Output]
+    E --> G[Grab's own API]
+    E --> H[Google Gemini API]
+    
+    I[Silence Detection] --> A
+    J[Active Detection\n(Wake Word\nDetection)] --> A
+    K[Passive Detection\n(Physical Button)] --> A
+    
+    L[Fine-Tuned Whisper\nModel\n(from huggingface)] --> C
+    M[General Whisper\nModel\n(from OpenAI)] --> C
+    
+    F --> N[Text-To-Speech\nby Flutter-TTS]
+```
 
 ## 🛠️ Tech Stack
 
