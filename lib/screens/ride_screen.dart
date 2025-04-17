@@ -2104,7 +2104,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Build weather indicator positioned on the left side
   Widget _buildWeatherIndicator() {
     return Positioned(
-      left: 22,
+      left: 20,
       top: 140,
       child: _isLoadingWeather
           ? Container(
