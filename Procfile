@@ -1,1 +1,1 @@
-web: python backend\TTS\api_flask.py
+web: python backend/TTS/api_flask.py
