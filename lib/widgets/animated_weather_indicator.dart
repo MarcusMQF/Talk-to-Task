@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 class AnimatedWeatherIndicator extends StatefulWidget {
   final String weatherEmoji;
   final String weatherCondition;
+  final bool isDarkMode;
   
   const AnimatedWeatherIndicator({
     Key? key,
     required this.weatherEmoji,
     required this.weatherCondition,
+    this.isDarkMode = false,
   }) : super(key: key);
 
   @override
@@ -172,7 +174,7 @@ class _AnimatedWeatherIndicatorState extends State<AnimatedWeatherIndicator> wit
         return Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.8),
+            color: widget.isDarkMode ? const Color(0xFF252525) : Colors.white.withOpacity(0.8),
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
