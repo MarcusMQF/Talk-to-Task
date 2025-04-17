@@ -88,8 +88,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Voice Recognition Module
   // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-  static const String SERVER_URL = 'http://10.167.64.239:8000/transcribe/';
-  static const String DENOISE_URL = 'http://10.167.64.239:8000/denoise/';
+  static const String SERVER_URL = 'http://10.167.66.116:8000/transcribe/';
+  static const String DENOISE_URL = 'http://10.167.66.116:8000/denoise/';
 
   final AudioRecorder _recorder = AudioRecorder();
   final GeminiService _geminiService = GeminiService();
