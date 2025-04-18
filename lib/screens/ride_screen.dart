@@ -1012,7 +1012,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
         // Get real-time device context
         Map<String, dynamic> deviceContext =
-            await _deviceInfo.getDeviceContext();
+            await _getDeviceContextWithWeather();
         print(deviceContext);
 
         // Create Gemini prompt with dynamic device info
@@ -2155,13 +2155,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
     
     return Positioned(
-      left: 20,
+      left: 21,
       top: 140,
       child: _isLoadingWeather
           ? Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: isDarkMode ? const Color(0xFF252525) : Colors.white.withOpacity(0.8),
+                color: Colors.blue, // Blue background regardless of theme
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
@@ -2176,7 +2176,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 height: 15,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(isDarkMode ? Colors.white70 : Colors.grey),
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               ),
             )
@@ -2186,6 +2186,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   weatherEmoji: _weatherData!['emoji'],
                   weatherCondition: _weatherData!['main'],
                   isDarkMode: isDarkMode,
+                  backgroundColor: Colors.blue, // Pass blue background color
                 ),
     );
   }
@@ -4111,5 +4112,22 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   void _updateMapStyleBasedOnTheme() {
     final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
     _mapController?.setMapStyle(themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
+  }
+
+  // Update the method for getting device context
+  Future<Map<String, dynamic>> _getDeviceContextWithWeather() async {
+    // Get basic device context
+    Map<String, dynamic> deviceContext = await _deviceInfo.getDeviceContext();
+    
+    // Override weather with our local _weatherData if it's available
+    if (_weatherData != null) {
+      final weatherText = "${_weatherData!['main']}, ${_weatherData!['temperature'].toStringAsFixed(1)}°C ${_weatherData!['emoji']}";
+      deviceContext['weather'] = weatherText;
+      print('Using local weather data for Gemini: $weatherText');
+    } else {
+      print('No local weather data available for Gemini, using DeviceInfo weather');
+    }
+    
+    return deviceContext;
   }
 }
