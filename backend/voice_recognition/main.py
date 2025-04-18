@@ -18,6 +18,7 @@ import numpy as np
 import noisereduce as nr
 import subprocess
 import shutil
+from df.enhance import enhance, init_df, load_audio, save_audio
 
 # Add this for Malaysian model
 tokenization_whisper.TASK_IDS = ["translate", "transcribe", "transcribeprecise"]
@@ -336,11 +337,14 @@ async def transcribe_with_fine_tuned_model(file_path: str, country: str):
 class AudioDenoiser:
     def __init__(self, sample_rate: int = 48000, chunk_size_seconds: float = 5.0):
         self.sample_rate = sample_rate
-        print(f"Noise reduction initialized with {sample_rate}Hz sample rate")
-
+        print(f"DeepFilterNet initialized with {sample_rate}Hz sample rate")
+        # Initialize DeepFilterNet model - this can be done once at startup
+        self.df_model, self.df_state, _ = init_df()
+        print("DeepFilterNet model loaded successfully")
+        
     async def process_audio(self, file_path: str, output_format: str = 'wav') -> dict:
         try:
-            print("\n=== Starting Audio Processing ===")
+            print("\n=== Starting Audio Processing with DeepFilterNet ===")
             print(f"Input file: {file_path}")
             temp_dir = os.path.dirname(file_path)
             wav_path = os.path.join(temp_dir, f'temp_{os.path.basename(file_path)}_{int(time.time())}.wav')
@@ -359,66 +363,65 @@ class AudioDenoiser:
             if result.returncode != 0:
                 raise Exception(f"FFmpeg conversion failed: {result.stderr}")
             
-            # Read the entire WAV file
-            with sf.SoundFile(wav_path) as sound_file:
-                total_frames = len(sound_file)
-                sample_rate = sound_file.samplerate
-                channels = sound_file.channels
-                print(f"Audio info: {total_frames} frames, {sample_rate}Hz, {channels} channels")
-                
-            # Get noise profile (from first 0.5 seconds)
-            noise_profile_frames = min(int(0.5 * sample_rate), total_frames)
-            with sf.SoundFile(wav_path) as infile:
-                noise_profile = infile.read(noise_profile_frames, dtype='float32')
-                if channels > 1:
-                    noise_profile = noise_profile.mean(axis=1)
+            # Load the audio file using DeepFilterNet's loader
+            print("Loading audio for processing...")
+            audio_data, metadata = load_audio(wav_path)
             
-            # Read the entire audio file
-            with sf.SoundFile(wav_path) as infile:
-                audio_data = infile.read(dtype='float32')
-                if channels > 1:
-                    audio_data = audio_data.mean(axis=1)
-                
-            # Calculate original energy
-            original_energy = np.sum(audio_data ** 2)
-            num_samples = len(audio_data)
+            sample_rate = metadata.sample_rate if hasattr(metadata, 'sample_rate') else self.sample_rate
+            print(f"Loaded audio with sample rate: {sample_rate}")
+
+            # Calculate original energy for metrics
+            original_energy = torch.sum(audio_data ** 2).item()
+            num_samples = audio_data.shape[0]
             
-            # Process the entire audio at once
-            print(f"Processing entire audio file ({num_samples} samples)...")
-            denoised_audio = await asyncio.to_thread(
-                nr.reduce_noise,
-                y=audio_data,
-                sr=sample_rate,
-                y_noise=noise_profile,
-                stationary=True,
-                prop_decrease=0.75,
-                freq_mask_smooth_hz=100,
-                n_jobs=1
+            # Process the audio with DeepFilterNet
+            print(f"Enhancing audio with DeepFilterNet ({num_samples} samples)...")
+            
+
+
+            enhanced_audio = await asyncio.to_thread(
+                enhance,
+                self.df_model,  
+                self.df_state, 
+                audio_data,
+                sample_rate
             )
-            
-            # Calculate denoised energy
-            denoised_energy = np.sum(denoised_audio ** 2)
-            
-            # Save the denoised audio
+            # Blend the enhanced audio with original for less aggressive denoising
+            blend_ratio = 0.7  # Adjust between 0.0 (all original) and 1.0 (all enhanced)
+            print(f"Blending audio with ratio {blend_ratio} (higher = more denoising)")
+
+            # Ensure both tensors have the same shape
+            if audio_data.shape != enhanced_audio.shape:
+                min_length = min(audio_data.shape[0], enhanced_audio.shape[0])
+                audio_data = audio_data[:min_length]
+                enhanced_audio = enhanced_audio[:min_length]
+
+            # Apply linear interpolation between original and enhanced audio
+            blended_audio = blend_ratio * enhanced_audio + (1 - blend_ratio) * audio_data
+            enhanced_audio = blended_audio  # Replace the enhanced audio with the blended version
+
+            # Calculate enhanced audio energy for metrics
+            enhanced_energy = torch.sum(enhanced_audio ** 2).item()
+
+            # An integer is required
+            int_sample_rate = int(sample_rate)
+
+            # Save the enhanced audio
             output_path = wav_path.replace('.wav', '_denoised.wav')
-            with sf.SoundFile(
-                output_path, 'w', samplerate=sample_rate, channels=1, format='WAV',
-                subtype='PCM_16'
-            ) as outfile:
-                outfile.write(denoised_audio)
+            await asyncio.to_thread(save_audio, output_path, enhanced_audio, int_sample_rate)
             
             # Calculate metrics
             if num_samples > 0:
                 original_rms = np.sqrt(original_energy / num_samples)
-                denoised_rms = np.sqrt(denoised_energy / num_samples)
-                noise_reduction = original_rms - denoised_rms
+                enhanced_rms = np.sqrt(enhanced_energy / num_samples)
+                noise_reduction = original_rms - enhanced_rms if original_rms > enhanced_rms else 0
             else:
-                original_rms = denoised_rms = noise_reduction = 0
+                original_rms = enhanced_rms = noise_reduction = 0
                 
             print("\n=== Processing Complete ===")
             print(f"Saved to: {output_path}")
             print(f"Original RMS: {original_rms:.4f}")
-            print(f"Denoised RMS: {denoised_rms:.4f}")
+            print(f"Enhanced RMS: {enhanced_rms:.4f}")
             reduction_percentage = (noise_reduction / original_rms) * 100 if original_rms != 0 else 0
             print(f"Noise Reduction: {reduction_percentage:.4f}%")
             
@@ -430,18 +433,18 @@ class AudioDenoiser:
                 "output_path": output_path,
                 "metrics": {
                     "original_rms": float(original_rms),
-                    "denoised_rms": float(denoised_rms),
+                    "enhanced_rms": float(enhanced_rms),
                     "noise_reduction": float(noise_reduction)
                 }
             }
         except Exception as e:
             if 'wav_path' in locals() and os.path.exists(wav_path):
                 os.unlink(wav_path)
-            print(f"Error in audio processing: {str(e)}")
+            print(f"Error in audio processing with DeepFilterNet: {str(e)}")
             import traceback
             traceback.print_exc()
             raise
-        
+            
 @app.post("/upload/")
 async def upload_and_process_audio(
     file: UploadFile = File(...),
