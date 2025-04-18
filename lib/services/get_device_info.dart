@@ -3,54 +3,81 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:location/location.dart' as loc;
 import 'package:geocoding/geocoding.dart';
-import 'package:flutter/foundation.dart';
 import './weather_service.dart';
+import 'dart:async';
+
+typedef WeatherUpdateCallback = void Function(Map<String, dynamic> weatherData);
 
 class DeviceInfoService {
   final Battery _battery = Battery();
   final Connectivity _connectivity = Connectivity();
-  final loc.Location _location = loc.Location(); // Use loc. prefix
+  final loc.Location _location = loc.Location();
   final WeatherService _weatherService = WeatherService();
-  loc.LocationData? _currentPosition; // Use loc. prefix
-  Map<String, String> _weatherCache = {};
+
+  // Location-related fields
+  loc.LocationData? _currentPosition;
   String _country = "Unknown";
   bool _hasInitialized = false;
   DateTime? _lastLocationUpdate;
-  static const Duration LOCATION_CACHE_DURATION = Duration(minutes: 5);
   bool _isInitializingLocation = false;
   DateTime? _lastInitializationAttempt;
+  bool _locationNeededForRequest = false;
+  bool _isAsyncInitializing = false;
+  // Weather-related fields
+  bool _isLoadingWeather = false;
+  Map<String, dynamic>? _weatherData;
+
+  // Constants
+  static const Duration LOCATION_CACHE_DURATION = Duration(minutes: 5);
   static const Duration MIN_INITIALIZATION_INTERVAL = Duration(seconds: 10);
- bool _locationNeededForRequest = false;
- 
+
+  // Callbacks - notice these are AFTER the typedef
+  WeatherUpdateCallback? onWeatherUpdated;
+
   Future<bool> initialize() async {
+    // Return true immediately if already initialized
     if (_hasInitialized) return true;
 
     // Prevent multiple simultaneous initialization attempts
-    if (_isInitializingLocation) {
-      print("🚫 Location initialization already in progress, skipping");
+    if (_isInitializingLocation || _isAsyncInitializing) {
+      print("🚫 Location initialization already in progress");
       return false;
     }
 
+    // Track that we're starting async initialization
+    _isAsyncInitializing = true;
+
+    // Start location initialization in the background
+    _initializeLocationAsync();
+
+    // Return immediately with success
+    return true;
+  }
+
+// New method to handle async initialization
+  void _initializeLocationAsync() {
     // Prevent too frequent initialization attempts
     if (_lastInitializationAttempt != null) {
       final timeSinceLastAttempt =
           DateTime.now().difference(_lastInitializationAttempt!);
       if (timeSinceLastAttempt < MIN_INITIALIZATION_INTERVAL) {
         print("🚫 Location was initialized recently, waiting");
-        return false;
+        _isAsyncInitializing = false;
+        return;
       }
     }
 
-    _isInitializingLocation = true;
     _lastInitializationAttempt = DateTime.now();
 
-    try {
-      bool success = await initializeLocation();
+    // Launch initialization in the background
+    initializeLocation().then((success) {
       _hasInitialized = success;
-      return success;
-    } finally {
-      _isInitializingLocation = false;
-    }
+      _isAsyncInitializing = false;
+      print("🔄 Background location initialization complete: $success");
+    }).catchError((e) {
+      print("❌ Error in background location initialization: $e");
+      _isAsyncInitializing = false;
+    });
   }
 
   Future<bool> initializeLocation() async {
@@ -162,20 +189,22 @@ class DeviceInfoService {
     }
   }
 
-Future<Map<String, dynamic>> getDeviceContext({bool needLocation = false}) async {
+  Future<Map<String, dynamic>> getDeviceContext(
+      {bool needLocation = false}) async {
     Map<String, dynamic> context = {};
     _locationNeededForRequest = needLocation;
-    
+
     // ALWAYS use Malaysia as default country unless explicitly requested
     context['location'] = "Malaysia";
-    
+
     // Only attempt to get real location if explicitly requested
     if (needLocation && _currentPosition != null) {
       try {
         // Use cached location data if available
         if (_country != "Unknown") {
           context['location'] = _country;
-        } else if (_currentPosition!.latitude != null && _currentPosition!.longitude != null) {
+        } else if (_currentPosition!.latitude != null &&
+            _currentPosition!.longitude != null) {
           // We have coordinates but no country - get country name
           _country = await _getCountryFromCoordinates(
               _currentPosition!.latitude!, _currentPosition!.longitude!);
@@ -190,16 +219,16 @@ Future<Map<String, dynamic>> getDeviceContext({bool needLocation = false}) async
     // Rest of your method to get non-location device context
     final batteryLevel = await _battery.batteryLevel;
     final batteryState = await _battery.batteryState;
-    final isCharging = batteryState == BatteryState.charging || 
-                      batteryState == BatteryState.full;
+    final isCharging = batteryState == BatteryState.charging ||
+        batteryState == BatteryState.full;
     final connectivityResult = await _connectivity.checkConnectivity();
     final networkStatus = _getNetworkStrength(connectivityResult);
     final now = DateTime.now();
     final timeStr = DateFormat('h:mm a').format(now);
     final trafficCondition = _getTrafficCondition(now);
-    
+
     // Use hardcoded weather for non-map contexts
-    final weather = needLocation ? await _getWeatherData() : "Sunny, 28°C"; 
+    final weather = needLocation ? await _getWeatherData() : "Sunny, 28°C";
 
     context['battery'] = '$batteryLevel%${isCharging ? " (Charging)" : ""}';
     context['network'] = networkStatus;
@@ -210,42 +239,83 @@ Future<Map<String, dynamic>> getDeviceContext({bool needLocation = false}) async
     return context;
   }
 
+// Also update _getWeatherData to use new function
   Future<String> _getWeatherData() async {
+    // If we have cached weather data, use that
+    if (_weatherData != null) {
+      return "${_weatherData!['main']}, ${_weatherData!['temperature']}°C ${_weatherData!['emoji']}";
+    }
+
+    // Otherwise try to fetch fresh data
+    final weatherData = await fetchWeatherData();
+    if (weatherData != null) {
+      return "${weatherData['main']}, ${weatherData['temperature']}°C ${weatherData['emoji']}";
+    }
+
+    // Default fallback
+    return "Sunny, 28°C ☀️";
+  }
+
+  Future<Map<String, dynamic>?> fetchWeatherData() async {
+    if (_currentPosition == null) {
+      print('Cannot fetch weather: Current position is null');
+
+      // Use a default location for Malaysia (Kuala Lumpur coordinates)
+      print('Falling back to default location (Kuala Lumpur)');
+
+      try {
+        final defaultLocation = {
+          'latitude': 3.1390,
+          'longitude': 101.6869,
+        };
+
+        final weatherData = await _weatherService.getWeatherByLocation(
+            defaultLocation['latitude']!, defaultLocation['longitude']!);
+
+        _weatherData = weatherData;
+        _isLoadingWeather = false;
+
+        print(
+            'Default weather fetched: ${weatherData['main']} - ${weatherData['emoji']} - ${weatherData['temperature']}°C');
+
+        if (onWeatherUpdated != null) {
+          onWeatherUpdated!(weatherData);
+        }
+
+        return weatherData;
+      } catch (e) {
+        _isLoadingWeather = false;
+        print('Error fetching default weather: $e');
+        return null;
+      }
+    }
+
+    // Add the missing implementation for when _currentPosition is not null
+    print(
+        'Fetching weather for location: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+
+    _isLoadingWeather = true;
+
     try {
-      // Check if we have cached weather within the last 15 minutes
-      final now = DateTime.now();
-      final dateKey =
-          '${now.year}-${now.month}-${now.day}-${now.hour}-${now.minute ~/ 15}';
-
-      if (_weatherCache.containsKey(dateKey)) {
-        debugPrint('Using cached weather data');
-        return _weatherCache[dateKey]!;
-      }
-
-      // Make sure we have location data
-      if (_currentPosition == null ||
-          _currentPosition!.latitude == null ||
-          _currentPosition!.longitude == null) {
-        debugPrint('Location data not available for weather');
-        return "Weather unavailable";
-      }
-
-      // Use the real WeatherService to get actual weather data
       final weatherData = await _weatherService.getWeatherByLocation(
           _currentPosition!.latitude!, _currentPosition!.longitude!);
 
-      // Format the weather data
-      final formattedWeather =
-          "${weatherData['main']}, ${weatherData['temperature'].toStringAsFixed(1)}°C";
-      debugPrint('Got real weather data: $formattedWeather');
+      _weatherData = weatherData;
+      _isLoadingWeather = false;
 
-      // Cache the result for 15 minutes
-      _weatherCache[dateKey] = formattedWeather;
+      print(
+          'Weather fetched: ${weatherData['main']} - ${weatherData['emoji']} - ${weatherData['temperature']}°C');
 
-      return formattedWeather;
+      // Notify listeners if callback is registered
+      if (onWeatherUpdated != null) {
+        onWeatherUpdated!(weatherData);
+      }
+
+      return weatherData;
     } catch (e) {
-      debugPrint('Error fetching real weather data: $e');
-      return "Weather unavailable";
+      _isLoadingWeather = false;
+      print('Error fetching weather: $e');
+      return null;
     }
   }
 

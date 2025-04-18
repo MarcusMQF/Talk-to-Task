@@ -46,21 +46,21 @@ COUNTRY_MODELS = {
         "model_id": "mesolitica/malaysian-whisper-small-v3",
         "language": "ms",
         "type": "malaysian",
-        "use_faster_whisper": True  # Enable faster-whisper for this model
+        "use_faster_whisper": False  # Enable faster-whisper for this model
     },
     "Singapore": {
         "name": "Singlish Whisper Model",
         "model_id": "jensenlwt/whisper-small-singlish-122k",
         "language": "en",
         "type": "pipeline",
-        "use_faster_whisper": True  # Enable faster-whisper for this model
+        "use_faster_whisper": False  # Enable faster-whisper for this model
     },
     "Thailand": {
         "name": "Thai Whisper Model",
         "model_id": "juierror/whisper-tiny-thai",
         "language": "th",
         "type": "thai",
-        "use_faster_whisper": True  # Enable faster-whisper for this model
+        "use_faster_whisper": False  # Enable faster-whisper for this model
     }
 }
 
@@ -192,12 +192,18 @@ class ModelHandler:
                 transcription = result["text"]
                 print(f"Pipeline transcription: {transcription}")
                 return transcription
+            
             print(f"Transcribing with custom model type: {model_type}")
             audio, sr = await asyncio.to_thread(librosa.load, file_path, sr=16000, mono=True)
             print(f"Loaded audio: {len(audio)} samples, {sr}Hz")
+
             inputs = self.processor(audio, sampling_rate=16000, return_tensors="pt")
-            input_features = inputs.input_features.to(self.device)
+
+            model_dtype = next(self.model.parameters()).dtype
+            input_features = inputs.input_features.to(device=self.device, dtype=model_dtype)
+            
             generation_kwargs = {}
+
             if model_type == "malaysian":
                 generation_kwargs["language"] = "ms" 
             elif model_type == "thai":
@@ -209,7 +215,7 @@ class ModelHandler:
             use_amp = self.device == "cuda"
             with torch.no_grad():
                 if use_amp:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast(device_type='cuda'):
                         generated = await asyncio.to_thread(
                             self.model.generate,
                             input_features,
@@ -413,7 +419,8 @@ class AudioDenoiser:
             print(f"Saved to: {output_path}")
             print(f"Original RMS: {original_rms:.4f}")
             print(f"Denoised RMS: {denoised_rms:.4f}")
-            print(f"Noise Reduction: {noise_reduction:.4f / original_rms:.4f} * 100")
+            reduction_percentage = (noise_reduction / original_rms) * 100 if original_rms != 0 else 0
+            print(f"Noise Reduction: {reduction_percentage:.4f}%")
             
             # Cleanup
             if os.path.exists(wav_path):

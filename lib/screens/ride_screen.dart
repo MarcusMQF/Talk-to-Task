@@ -17,10 +17,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:location/location.dart';
-import '../services/gemini_service.dart';
 import '../services/wake_word.dart';
 import '../services/get_device_info.dart';
-import '../services/weather_service.dart';
 import '../widgets/animated_weather_indicator.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'dart:typed_data';
@@ -78,7 +76,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   late Animation<double> _timerGlowAnimation;
 
   // Weather related properties
-  final WeatherService _weatherService = WeatherService();
   bool _isLoadingWeather = false;
   Map<String, dynamic>? _weatherData;
   Timer? _weatherUpdateTimer;
@@ -86,25 +83,24 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Store provider reference for safe disposal
   late VoiceAssistantProvider _voiceProvider;
 
-  // Voice Recognition Module
-  // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-
   final AudioRecorder _recorder = AudioRecorder();
-  final AudioProcessingService audioProcessingService = AudioProcessingService();
-  final GeminiService _geminiService = GeminiService();
+  final AudioProcessingService audioProcessingService =
+      AudioProcessingService();
   final DeviceInfoService _deviceInfo = DeviceInfoService();
-  
+
   String _transcription = "Press the mic to start speaking.";
-  String _baseTranscription = "";
-  String _fineTunedTranscription = "";
   String _geminiResponse = "";
+  final StreamController<String> _geminiStreamController =
+      StreamController<String>.broadcast();
+  String _baseTranscription = '';
+  String _fineTunedTranscription = '';
+  bool _isRecording = false;
 
   Timer? _amplitudeTimer;
   Timer? _silenceTimer;
   double _lastAmplitude = -30.0;
   double _currentAmplitude = -30.0;
   bool _hasDetectedSpeech = false;
-  bool _isRecording = false;
   int _silenceDuration = INITIAL_SILENCE_DURATION;
   int _silenceCount = 0;
   static const double SILENCE_THRESHOLD = 3.0;
@@ -126,8 +122,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   String _estimatedPickupTime = "8 min";
   String _estimatedTripDuration = "18 min";
   String _driverToPickupDistance = "0.0 km";
-  final StreamController<String> _geminiStreamController =
-      StreamController<String>.broadcast();
 
   // Navigation & directions related properties
   bool _isDirectionsLoading = false;
@@ -142,18 +136,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Compass button visibility state
   bool _showCompassButton = false;
   double _mapBearing = 0.0;
-  
+
   // Add state variable to track map loading
   bool _isMapLoading = true;
 
   @override
   void initState() {
-  
     super.initState();
-    
-    // Move _initializeLocation call earlier in the initialization process
+
     _initializeLocation();
-    
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
@@ -164,11 +155,29 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _setupLocationUpdates();
     _setupWeatherUpdates();
 
+    // Add this callback to handle transcription completion
+    audioProcessingService.onTranscriptionComplete =
+        (String baseText, String fineTunedText, String geminiResponse) {
+      if (mounted) {
+        setState(() {
+          _baseTranscription = baseText;
+          _fineTunedTranscription = fineTunedText;
+          _geminiResponse = geminiResponse;
+          _isProcessing = false;
+
+          // This is critical - update the stream to notify UI
+          _geminiStreamController.add(geminiResponse);
+        });
+
+        // Optional: Speak the response
+        _speakResponse(geminiResponse);
+      }
+    };
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _positionVoiceButtonBottomRight();
       _setupVoiceCommandHandler();
-      
+
       // Listen to theme changes and update map style accordingly
       final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
       themeProvider.addListener(_updateMapStyleBasedOnTheme);
@@ -198,7 +207,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("en-US");
     await _flutterTts
-        .setSpeechRate(0.5); // Slightly slower for better comprehension
+        .setSpeechRate(0.3); // Slightly slower for better comprehension
     await _flutterTts.setVolume(1.0);
     await _flutterTts.setPitch(1.0);
 
@@ -210,24 +219,26 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
-// Add this method to speak text
   Future<void> _speakResponse(String text) async {
-    if (text.isEmpty) return;
+    try {
+      // Stop any ongoing speech first
+      if (_isSpeaking) {
+        await _flutterTts.stop();
+      }
 
-    // Stop any ongoing speech
-    if (_isSpeaking) {
-      await _flutterTts.stop();
+      // Set speaking state
+      setState(() {
+        _isSpeaking = true;
+      });
+
+      // No need to reinitialize - just speak with the already configured instance
+      await _flutterTts.speak(text);
+    } catch (e) {
+      print('Error speaking response: $e');
+      setState(() {
+        _isSpeaking = false;
+      });
     }
-
-    setState(() {
-      _isSpeaking = true;
-    });
-
-    // Clean up the text - remove markdown formatting if needed
-    String cleanText =
-        text.replaceAll('*', '').replaceAll('#', '').replaceAll('_', '');
-
-    await _flutterTts.speak(cleanText);
   }
 
 // Add this method to stop speaking
@@ -243,18 +254,18 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   void dispose() {
     WakeWordService.dispose(); // Add this line
     _voiceProvider.removeCommandCallback();
-    
+
     // Remove theme change listener
     final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
     themeProvider.removeListener(_updateMapStyleBasedOnTheme);
-    
+
     // Dispose of other resources
     _slideController.dispose();
     _requestCardController.dispose();
     _voiceButtonAnimController.dispose();
     _timerShakeController.dispose();
     _timerGlowController.dispose();
-    
+
     _requestTimer?.cancel();
     _amplitudeTimer?.cancel();
     _silenceTimer?.cancel();
@@ -262,53 +273,74 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _weatherUpdateTimer?.cancel();
     _navigationUpdateTimer?.cancel();
     _geminiStreamController.close();
-    
+    audioProcessingService.dispose();
     _mapController?.dispose();
+    _weatherUpdateTimer?.cancel();
     super.dispose();
   }
-  
-  // Fetch weather data for current location
+
+// Update the _fetchWeatherData method
   Future<void> _fetchWeatherData() async {
-    if (_currentPosition == null) {
-      print('Cannot fetch weather: Current position is null');
-      return;
-    }
-    
-    print('Fetching weather for location: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
-    
+    if (!mounted) return;
+
     setState(() {
       _isLoadingWeather = true;
     });
-    
-    try {
-      final weatherData = await _weatherService.getWeatherByLocation(
-        _currentPosition!.latitude!,
-        _currentPosition!.longitude!
-      );
-      
-      setState(() {
-        _weatherData = weatherData;
-        _isLoadingWeather = false;
-      });
-      
-      print('Weather fetched: ${weatherData['main']} - ${weatherData['emoji']} - ${weatherData['temperature']}°C');
-    } catch (e) {
-      setState(() {
-        _isLoadingWeather = false;
-      });
-      print('Error fetching weather: $e');
-    }
+
+    // Use the DeviceInfoService to fetch the weather
+    await _deviceInfo.fetchWeatherData();
+    // The callback will handle updating the UI
   }
-  
-  // Setup periodic weather updates
+
   void _setupWeatherUpdates() {
-    // Initial fetch
-    _fetchWeatherData();
-    
+    // Register callback to update UI when weather data changes
+    _deviceInfo.onWeatherUpdated = (weatherData) {
+      if (mounted) {
+        setState(() {
+          _weatherData = weatherData;
+          _isLoadingWeather = false;
+        });
+      }
+    };
+
+    // Wait for location to be initialized before fetching weather
+    _waitForLocationAndFetchWeather();
+
     // Update weather every 15 minutes
     _weatherUpdateTimer = Timer.periodic(const Duration(minutes: 15), (_) {
-      _fetchWeatherData();
+      _waitForLocationAndFetchWeather();
     });
+  }
+
+// Add this helper method
+  Future<void> _waitForLocationAndFetchWeather() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoadingWeather = true;
+    });
+
+    // If there's no location yet, try to initialize location first
+    if (_currentPosition == null) {
+      print("No location available, trying to initialize location first");
+      await _initializeLocation();
+    }
+
+    // Check again if we have location data after initialization
+    if (_currentPosition != null) {
+      await _deviceInfo.fetchWeatherData();
+    } else {
+      print("Still no location available, using hardcoded weather data");
+      setState(() {
+        _weatherData = {
+          'main': 'Sunny',
+          'temperature': 28,
+          'emoji': '☀️',
+          'description': 'Clear sky'
+        };
+        _isLoadingWeather = false;
+      });
+    }
   }
 
   Future<void> _initializeWakeWordDetection() async {
@@ -392,7 +424,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // Show modal bottom sheet
     // Get theme mode first
     // ignore: unused_local_variable
-    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+    final isDarkMode =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -688,7 +721,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       serviceEnabled = await _location.requestService();
       if (!serviceEnabled) {
         setState(() {
-          _isMapLoading = false; // Stop loading indicator if service is disabled
+          _isMapLoading =
+              false; // Stop loading indicator if service is disabled
         });
         return;
       }
@@ -700,7 +734,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       permissionGranted = await _location.requestPermission();
       if (permissionGranted != PermissionStatus.granted) {
         setState(() {
-          _isMapLoading = false; // Stop loading indicator if permission is denied
+          _isMapLoading =
+              false; // Stop loading indicator if permission is denied
         });
         return;
       }
@@ -716,10 +751,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     try {
       // Get initial location immediately
       final locationData = await _location.getLocation();
-      
+
       setState(() {
         _currentPosition = locationData;
-        
+
         // Update driver marker as soon as we have a location
         if (_currentPosition != null) {
           _updateDriverLocationMarker();
@@ -737,14 +772,14 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           if (placemarks.isNotEmpty) {
             setState(() {
               final rawCountry = placemarks.first.country ?? "Unknown";
-              
+
               final countryMapping = {
                 'Malaysia': 'Malaysia',
                 'Singapore': 'Singapore',
                 'Thailand': 'Thailand',
                 'Indonesia': 'Indonesia',
               };
-              
+
               _country = countryMapping[rawCountry] ?? rawCountry;
               print('Country detected: $_country');
             });
@@ -753,10 +788,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           print('Error getting country: $e');
         }
       }
-      
+
       // Also update distance information
       _updateDistanceInformation();
-      
+
       // Stop loading indicator
       setState(() {
         _isMapLoading = false;
@@ -774,6 +809,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     return p.join(dir.path, 'recorded_audio.wav'); // Changed from .m4a to .wav
   }
 
+// In your _startRecording() method, modify it to:
   Future<void> _startRecording() async {
     try {
       print('\n=== Starting Recording Process ===');
@@ -805,6 +841,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Set recording state variables
       setState(() {
         _isRecording = true;
+        _isProcessing = false; // Make sure processing is false during recording
         _hasDetectedSpeech = false;
         _silenceCount = 0;
         _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
@@ -822,6 +859,53 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _transcription = "Error: Failed to start recording";
       });
       rethrow; // Important to propagate the error
+    }
+  }
+
+// In your _stopAndSendRecording() method:
+  Future<void> _stopAndSendRecording() async {
+    try {
+      print('\n=== Stopping Recording ===');
+      _silenceTimer?.cancel();
+
+      final path = await _recorder.stop();
+
+      // Set processing state BEFORE the setState call to ensure UI update
+      _isProcessing = true;
+      _isRecording = false;
+
+      setState(() {
+        // Use the variables already set above
+        _transcription = "Processing audio...";
+      });
+
+      if (path == null) {
+        throw Exception('Recording stopped but no file path returned');
+      }
+
+      final file = File(path);
+      if (!await file.exists()) {
+        throw Exception('Recording file not found at: $path');
+      }
+
+      final fileSize = await file.length();
+      print('Recording stopped. File size: $fileSize bytes');
+
+      if (fileSize == 0) {
+        throw Exception('Recording file is empty');
+      }
+
+      // Add the print statement to verify the state
+      print('Processing state before API call: $_isProcessing');
+
+      // Upload audio and wait for response
+      await audioProcessingService.uploadAudio(file);
+    } catch (e) {
+      print('Error in _stopAndSendRecording: $e');
+      setState(() {
+        _transcription = "Error: Failed to process recording";
+        _isProcessing = false;
+      });
     }
   }
 
@@ -907,44 +991,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
 
     print("Amplitude monitoring started");
-  }
-
-  Future<void> _stopAndSendRecording() async {
-    try {
-      print('\n=== Stopping Recording ===');
-      _silenceTimer?.cancel();
-
-      final path = await _recorder.stop();
-      setState(() {
-        _isRecording = false;
-        _isProcessing = true; // Set processing state
-      });
-
-      if (path == null) {
-        throw Exception('Recording stopped but no file path returned');
-      }
-
-      final file = File(path);
-      if (!await file.exists()) {
-        throw Exception('Recording file not found at: $path');
-      }
-
-      final fileSize = await file.length();
-      print('Recording stopped. File size: $fileSize bytes');
-
-      if (fileSize == 0) {
-        throw Exception('Recording file is empty');
-      }
-
-      setState(() => _transcription = "Processing audio...");
-      await audioProcessingService.uploadAudio(file);
-    } catch (e) {
-      print('Error in _stopAndSendRecording: $e');
-      setState(() {
-        _transcription = "Error: Failed to process recording";
-        _isProcessing = false;
-      });
-    }
   }
 
   Future<void> _handleLocationPermission() async {
@@ -1212,8 +1258,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                           'OFFLINE',
                           style: TextStyle(
                             color: !_isOnline
-                                ? (isDarkMode ? Colors.grey[500] : Colors.grey[400])
-                                : (isDarkMode ? Colors.grey[700] : Colors.grey[300]),
+                                ? (isDarkMode
+                                    ? Colors.grey[500]
+                                    : Colors.grey[400])
+                                : (isDarkMode
+                                    ? Colors.grey[700]
+                                    : Colors.grey[300]),
                             fontWeight: FontWeight.w600,
                             fontSize: 12,
                           ),
@@ -1226,8 +1276,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                           'ONLINE',
                           style: TextStyle(
                             color: _isOnline
-                                ? (isDarkMode ? Colors.grey[500] : Colors.grey[400])
-                                : (isDarkMode ? Colors.grey[700] : Colors.grey[300]),
+                                ? (isDarkMode
+                                    ? Colors.grey[500]
+                                    : Colors.grey[400])
+                                : (isDarkMode
+                                    ? Colors.grey[700]
+                                    : Colors.grey[300]),
                             fontWeight: FontWeight.w600,
                             fontSize: 12,
                           ),
@@ -1255,8 +1309,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                                       AppTheme.grabGreen.withOpacity(0.8)
                                     ]
                                   : [
-                                      isDarkMode ? Colors.grey[600]! : Colors.grey[400]!,
-                                      isDarkMode ? Colors.grey[600]!.withOpacity(0.8) : Colors.grey[400]!.withOpacity(0.8)
+                                      isDarkMode
+                                          ? Colors.grey[600]!
+                                          : Colors.grey[400]!,
+                                      isDarkMode
+                                          ? Colors.grey[600]!.withOpacity(0.8)
+                                          : Colors.grey[400]!.withOpacity(0.8)
                                     ],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
@@ -1266,7 +1324,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                               BoxShadow(
                                 color: (_isOnline
                                         ? AppTheme.grabGreen
-                                        : isDarkMode ? Colors.grey[600]! : Colors.grey[400]!)
+                                        : isDarkMode
+                                            ? Colors.grey[600]!
+                                            : Colors.grey[400]!)
                                     .withOpacity(0.3),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
@@ -1281,7 +1341,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                                   Icons.circle,
                                   color: _isOnline
                                       ? Colors.white
-                                      : isDarkMode ? Colors.white : const Color.fromARGB(255, 126, 125, 125),
+                                      : isDarkMode
+                                          ? Colors.white
+                                          : const Color.fromARGB(
+                                              255, 126, 125, 125),
                                   size: 12,
                                 ),
                                 const SizedBox(width: 4),
@@ -1371,8 +1434,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               padding: const EdgeInsets.symmetric(vertical: 10),
               decoration: BoxDecoration(
                 color: isUrgent
-                    ? (isDarkMode ? Colors.red.withOpacity(0.2) : Colors.red.withOpacity(0.1))
-                    : (isDarkMode ? AppTheme.grabGreen.withOpacity(0.2) : AppTheme.grabGreen.withOpacity(0.1)),
+                    ? (isDarkMode
+                        ? Colors.red.withOpacity(0.2)
+                        : Colors.red.withOpacity(0.1))
+                    : (isDarkMode
+                        ? AppTheme.grabGreen.withOpacity(0.2)
+                        : AppTheme.grabGreen.withOpacity(0.1)),
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(16)),
               ),
@@ -1437,8 +1504,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                       child: LinearProgressIndicator(
                         value:
                             _remainingSeconds / 15, // Assuming 15 seconds total
-                        backgroundColor:
-                            isDarkMode ? Colors.grey.shade800 : const Color.fromARGB(255, 255, 255, 255),
+                        backgroundColor: isDarkMode
+                            ? Colors.grey.shade800
+                            : const Color.fromARGB(255, 255, 255, 255),
                         valueColor: AlwaysStoppedAnimation<Color>(
                             isUrgent ? Colors.red : AppTheme.grabGreen),
                       ),
@@ -1488,12 +1556,17 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                       Row(
                         children: [
                           Icon(Icons.payment,
-                              size: 16, color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700),
+                              size: 16,
+                              color: isDarkMode
+                                  ? Colors.grey.shade300
+                                  : Colors.grey.shade700),
                           const SizedBox(width: 4),
                           Text(
                             _paymentMethod,
                             style: TextStyle(
-                              color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+                              color: isDarkMode
+                                  ? Colors.grey.shade300
+                                  : Colors.grey.shade700,
                               fontWeight: FontWeight.w500,
                               fontSize: 12,
                             ),
@@ -1526,7 +1599,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                           Text(
                             'Trip distance: $_tripDistance',
                             style: TextStyle(
-                              color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600,
+                              color: isDarkMode
+                                  ? Colors.grey.shade400
+                                  : Colors.grey.shade600,
                               fontWeight: FontWeight.w500,
                               fontSize: 12,
                             ),
@@ -1584,55 +1659,56 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 20),
 
                   // Navigation card with map preview
-                  Builder(
-                    builder: (context) {
-                      final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
-                      return Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: isDarkMode ? const Color(0xFF333333) : Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          children: [
-                            // Quick navigation actions
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: [
-                                _buildNavigationAction(
-                                  icon: Icons.directions,
-                                  label: 'Directions',
-                                  onTap: () {
-                                    if (_mapController != null) {
-                                      _mapController!.animateCamera(
-                                        CameraUpdate.newCameraPosition(
-                                          const CameraPosition(
-                                            target: _initialPosition,
-                                            zoom: 16,
-                                            tilt: 45,
-                                          ),
+                  Builder(builder: (context) {
+                    final isDarkMode =
+                        Provider.of<ThemeProvider>(context).isDarkMode;
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: isDarkMode
+                            ? const Color(0xFF333333)
+                            : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: [
+                          // Quick navigation actions
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _buildNavigationAction(
+                                icon: Icons.directions,
+                                label: 'Directions',
+                                onTap: () {
+                                  if (_mapController != null) {
+                                    _mapController!.animateCamera(
+                                      CameraUpdate.newCameraPosition(
+                                        const CameraPosition(
+                                          target: _initialPosition,
+                                          zoom: 16,
+                                          tilt: 45,
                                         ),
-                                      );
-                                    }
-                                  },
-                                ),
-                                _buildNavigationAction(
-                                  icon: Icons.call,
-                                  label: 'Call',
-                                  onTap: _showCallDialog,
-                                ),
-                                _buildNavigationAction(
-                                  icon: Icons.message,
-                                  label: 'Message',
-                                  onTap: () {},
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                  ),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                              _buildNavigationAction(
+                                icon: Icons.call,
+                                label: 'Call',
+                                onTap: _showCallDialog,
+                              ),
+                              _buildNavigationAction(
+                                icon: Icons.message,
+                                label: 'Message',
+                                onTap: () {},
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
 
                   const SizedBox(height: 20),
 
@@ -1686,66 +1762,75 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                         const SizedBox(width: 15),
                         // Right side - Text content
                         Expanded(
-                          child: Builder(
-                            builder: (context) {
-                              final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
-                              return Column(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Pickup text
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Pickup',
-                                        style: TextStyle(
-                                          color: isDarkMode ? Colors.grey.shade300 : Colors.grey,
-                                          fontSize: 12,
-                                        ),
+                          child: Builder(builder: (context) {
+                            final isDarkMode =
+                                Provider.of<ThemeProvider>(context).isDarkMode;
+                            return Column(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Pickup text
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Pickup',
+                                      style: TextStyle(
+                                        color: isDarkMode
+                                            ? Colors.grey.shade300
+                                            : Colors.grey,
+                                        fontSize: 12,
                                       ),
-                                      Text(
-                                        'Sunway Pyramid Mall, PJ',
-                                        style: TextStyle(
-                                          color: isDarkMode ? Colors.white : AppTheme.grabBlack,
-                                          fontWeight: FontWeight.w500,
-                                        ),
+                                    ),
+                                    Text(
+                                      'Sunway Pyramid Mall, PJ',
+                                      style: TextStyle(
+                                        color: isDarkMode
+                                            ? Colors.white
+                                            : AppTheme.grabBlack,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                      Text(
-                                        'Main entrance, near Starbucks',
-                                        style: TextStyle(
-                                          color: isDarkMode ? Colors.grey.shade400 : Colors.grey,
-                                          fontSize: 12,
-                                        ),
+                                    ),
+                                    Text(
+                                      'Main entrance, near Starbucks',
+                                      style: TextStyle(
+                                        color: isDarkMode
+                                            ? Colors.grey.shade400
+                                            : Colors.grey,
+                                        fontSize: 12,
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
+                                ),
 
-                                  const SizedBox(height: 35),
+                                const SizedBox(height: 35),
 
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Destination',
-                                        style: TextStyle(
-                                          color: isDarkMode ? Colors.grey.shade300 : Colors.grey,
-                                          fontSize: 12,
-                                        ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Destination',
+                                      style: TextStyle(
+                                        color: isDarkMode
+                                            ? Colors.grey.shade300
+                                            : Colors.grey,
+                                        fontSize: 12,
                                       ),
-                                      Text(
-                                        'KL Sentral, Kuala Lumpur',
-                                        style: TextStyle(
-                                          color: isDarkMode ? Colors.white : AppTheme.grabBlack,
-                                          fontWeight: FontWeight.w500,
-                                        ),
+                                    ),
+                                    Text(
+                                      'KL Sentral, Kuala Lumpur',
+                                      style: TextStyle(
+                                        color: isDarkMode
+                                            ? Colors.white
+                                            : AppTheme.grabBlack,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                    ],
-                                  ),
-                                ],
-                              );
-                            }
-                          ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            );
+                          }),
                         ),
                       ],
                     ),
@@ -1769,10 +1854,17 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                             });
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: isDarkMode ? const Color(0xFF333333) : Colors.white,
-                            foregroundColor: isDarkMode ? Colors.grey.shade300 : AppTheme.grabGrayDark,
+                            backgroundColor: isDarkMode
+                                ? const Color(0xFF333333)
+                                : Colors.white,
+                            foregroundColor: isDarkMode
+                                ? Colors.grey.shade300
+                                : AppTheme.grabGrayDark,
                             elevation: 0,
-                            side: BorderSide(color: isDarkMode ? Colors.grey.shade700 : Colors.grey.shade300),
+                            side: BorderSide(
+                                color: isDarkMode
+                                    ? Colors.grey.shade700
+                                    : Colors.grey.shade300),
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
@@ -1783,7 +1875,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: isDarkMode ? Colors.grey.shade300 : AppTheme.grabGrayDark,
+                              color: isDarkMode
+                                  ? Colors.grey.shade300
+                                  : AppTheme.grabGrayDark,
                             ),
                           ),
                         ),
@@ -1831,7 +1925,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDarkMode = themeProvider.isDarkMode;
-    
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
@@ -1982,7 +2076,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Build weather indicator positioned on the left side
   Widget _buildWeatherIndicator() {
     final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
-    
+
     return Positioned(
       left: 21,
       top: 140,
@@ -2017,7 +2111,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 ),
               ),
             ),
-            
+
             // Weather display with animated opacity
             AnimatedOpacity(
               opacity: (!_isLoadingWeather && _weatherData != null) ? 1.0 : 0.0,
@@ -2046,9 +2140,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       builder: (context, themeProvider, _) {
         // Apply map style if map controller is already created
         if (_mapController != null) {
-          _mapController!.setMapStyle(themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
+          _mapController!.setMapStyle(
+              themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
         }
-        
+
         return Scaffold(
           body: Stack(
             children: [
@@ -2059,10 +2154,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 ),
                 onMapCreated: (GoogleMapController controller) {
                   _mapController = controller;
-                  
+
                   // Apply theme-based map style
-                  controller.setMapStyle(themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
-                  
+                  controller.setMapStyle(themeProvider.isDarkMode
+                      ? MapStyles.dark
+                      : MapStyles.light);
+
                   // If we already have location by this point, center map on it
                   if (_currentPosition != null) {
                     _centerMapOnDriverPosition();
@@ -2090,11 +2187,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 mapToolbarEnabled: false,
                 compassEnabled: false, // Disable default compass button
               ),
-              
+
               // Map loading indicator - shown until location is ready
               if (_isMapLoading)
                 Container(
-                  color: themeProvider.isDarkMode 
+                  color: themeProvider.isDarkMode
                       ? Colors.black.withOpacity(0.6)
                       : Colors.white.withOpacity(0.6),
                   child: Center(
@@ -2102,13 +2199,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
                         ),
                         const SizedBox(height: 16),
                         Text(
                           "Getting your location...",
                           style: TextStyle(
-                            color: themeProvider.isDarkMode ? Colors.white : Colors.black87,
+                            color: themeProvider.isDarkMode
+                                ? Colors.white
+                                : Colors.black87,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -2116,7 +2216,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-              
+
               // Rest of UI components
               _buildOnlineToggle(),
               _buildWeatherIndicator(),
@@ -2185,7 +2285,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Widget _buildDraggableVoiceButton() {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDarkMode = themeProvider.isDarkMode;
-    
+
     return Positioned(
       left: _voiceButtonPosition.dx,
       top: _voiceButtonPosition.dy,
@@ -2253,7 +2353,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 // Show modal bottom sheet with a completely different approach
                 // Get theme mode first
                 // ignore: unused_local_variable
-                final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+                final isDarkMode =
+                    Provider.of<ThemeProvider>(context, listen: false)
+                        .isDarkMode;
                 showModalBottomSheet(
                   context: context,
                   backgroundColor: Colors.transparent,
@@ -2292,110 +2394,138 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
-// Extract the modal into a separate method
-Widget _buildVoiceModal(BuildContext context) {
-  // Get theme provider to check dark mode status
-  final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
-  
-  return StatefulBuilder(
-    builder: (BuildContext context, StateSetter modalSetState) {
-      // This function will refresh the modal with current state
-      void updateModalState() {
-        modalSetState(() {});
-      }
+  Widget _buildVoiceModal(BuildContext context) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Future.delayed(Duration(milliseconds: 500), () {
-          if (context.mounted) updateModalState();
+    print(
+        'Building voice modal: isRecording=$_isRecording, isProcessing=$_isProcessing');
+
+    return StatefulBuilder(
+      builder: (BuildContext context, StateSetter modalSetState) {
+        // Use this to force rebuild the modal when state changes
+        void updateModalState() {
+          modalSetState(() {});
+        }
+
+        // This ensures the modal updates after each frame
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          updateModalState();
         });
-      });
 
-      return StreamBuilder<String>(
-        stream: _geminiStreamController.stream,
-        initialData: _geminiResponse,
-        builder: (context, snapshot) {
-          return Container(
-            width: double.infinity,
-            height: 300,
-            decoration: BoxDecoration(
-              color: isDarkMode ? const Color(0xFF252525) : Colors.white,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
+        return StreamBuilder<String>(
+          stream: _geminiStreamController.stream,
+          initialData: _geminiResponse,
+          builder: (context, snapshot) {
+            return Container(
+              width: double.infinity,
+              height: 300,
+              decoration: BoxDecoration(
+                color: isDarkMode ? const Color(0xFF252525) : Colors.white,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
               ),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (_isRecording)
-                  Column(
-                    children: [
-                      const Icon(
-                        Icons.mic,
-                        color: AppTheme.grabGreen,
-                        size: 48,
+              child: Column(
+                children: [
+                  // Header (optional)
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      "Voice Assistant",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: isDarkMode ? Colors.white : Colors.black,
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _transcription,
-                        style: TextStyle(
-                          color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-                        ),
-                      ),
-                    ],
-                  )
-                else if (_isProcessing)
-                  Column(
-                    children: [
-                      const CircularProgressIndicator(
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        "Processing...",
-                        style: TextStyle(
-                          color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-                        ),
-                      ),
-                    ],
-                  )
-                else if (snapshot.hasData && snapshot.data!.isNotEmpty)
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(23),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Add this Text widget to display the Gemini response
-                          Text(
-                            snapshot.data!,
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: isDarkMode ? Colors.white : Colors.black87,
-                              height: 1.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  Text(
-                    "No data available",
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                     ),
                   ),
-              ],
-            ),
-          );
-        },
+                  // Content area
+                  Expanded(
+                    child: _isRecording
+                        ? _buildRecordingState(isDarkMode)
+                        : _isProcessing
+                            ? _buildProcessingState(isDarkMode)
+                            : _buildResponseState(
+                                snapshot.data ?? "", isDarkMode),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+// This processing state shows a loading spinner while waiting for backend response
+  Widget _buildProcessingState(bool isDarkMode) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          "Processing your request...",
+          style: TextStyle(
+            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+          ),
+        ),
+      ],
+    );
+  }
+
+// Helper methods to organize the UI code
+  Widget _buildRecordingState(bool isDarkMode) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(
+          Icons.mic,
+          color: Colors.green,
+          size: 48,
+        ),
+        const SizedBox(height: 16),
+        Text(
+          _transcription,
+          style: TextStyle(
+            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildResponseState(String response, bool isDarkMode) {
+    // Return different UI based on whether we have a response
+    if (response.isEmpty) {
+      return Center(
+        child: Text(
+          "Ask me anything about your ride or navigation",
+          style: TextStyle(
+            fontSize: 16,
+            color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600,
+          ),
+          textAlign: TextAlign.center,
+        ),
       );
-    },
-  );
-}
-  // Set up voice command handler
+    }
+
+    // Return the actual response UI
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Text(
+        response,
+        style: TextStyle(
+          fontSize: 16,
+          color: isDarkMode ? Colors.white : Colors.black87,
+          height: 1.5,
+        ),
+      ),
+    );
+  }
+
   void _setupVoiceCommandHandler() {
     _voiceProvider.setCommandCallback((command) {
       switch (command) {
@@ -2446,13 +2576,15 @@ Widget _buildVoiceModal(BuildContext context) {
 
   void _showCancelConfirmation() {
     // Get theme mode
-    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
-    
+    final isDarkMode =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
-        title: Text('Cancel Trip?', 
+        title: Text(
+          'Cancel Trip?',
           style: TextStyle(
             color: isDarkMode ? Colors.white : Colors.black,
           ),
@@ -2466,7 +2598,11 @@ Widget _buildVoiceModal(BuildContext context) {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('NO', style: TextStyle(color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700)),
+            child: Text('NO',
+                style: TextStyle(
+                    color: isDarkMode
+                        ? Colors.grey.shade300
+                        : Colors.grey.shade700)),
           ),
           TextButton(
             onPressed: () {
@@ -2484,7 +2620,7 @@ Widget _buildVoiceModal(BuildContext context) {
   void _cancelTrip() {
     // Speak confirmation of cancellation
     _speakResponse("Trip cancelled.");
-    
+
     setState(() {
       _isNavigationMode = false;
       _isNavigatingToPickup = false;
@@ -2527,7 +2663,7 @@ Widget _buildVoiceModal(BuildContext context) {
         backgroundColor: Colors.red,
       ),
     );
-    
+
     // Make driver available for new passenger requests
     if (_isOnline) {
       // Show a brief message to indicate the driver is available for new orders
@@ -2542,7 +2678,7 @@ Widget _buildVoiceModal(BuildContext context) {
           );
         }
       });
-      
+
       // Show a new order request after a short delay
       Future.delayed(const Duration(seconds: 5), () {
         if (mounted && _isOnline) {
@@ -2574,35 +2710,37 @@ Widget _buildVoiceModal(BuildContext context) {
     double lastLat = 0;
     double lastLng = 0;
     bool isFirstUpdate = true;
-    
+
     // Set up location change listener
     _location.onLocationChanged.listen((LocationData currentLocation) {
       if (mounted) {
         setState(() {
           _currentPosition = currentLocation;
         });
-        
+
         // Always update driver marker on position changes
         _updateDriverLocationMarker();
-        
+
         // If map hasn't been initialized yet, center on driver
-        if (_mapController != null && !_mapInitialized && _currentPosition != null) {
+        if (_mapController != null &&
+            !_mapInitialized &&
+            _currentPosition != null) {
           _centerMapOnDriverPosition();
           _mapInitialized = true;
         }
-        
+
         // Check if location has changed significantly (more than 500 meters)
         // or if it's the first update
         final currentLat = currentLocation.latitude!;
         final currentLng = currentLocation.longitude!;
-        
-        if (isFirstUpdate || 
+
+        if (isFirstUpdate ||
             calculateDistance(lastLat, lastLng, currentLat, currentLng) > 0.5) {
           // Update last position
           lastLat = currentLat;
           lastLng = currentLng;
           isFirstUpdate = false;
-          
+
           // Fetch weather for new location
           _fetchWeatherData();
         }
@@ -2848,7 +2986,8 @@ Widget _buildVoiceModal(BuildContext context) {
     });
 
     // Get theme mode
-    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+    final isDarkMode =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
 
     // Show a bottom sheet for pickup confirmation
     showModalBottomSheet(
@@ -2892,7 +3031,8 @@ Widget _buildVoiceModal(BuildContext context) {
                       label: const Text('Call'),
                       style: ElevatedButton.styleFrom(
                         foregroundColor: AppTheme.grabGreen,
-                        backgroundColor: isDarkMode ? const Color(0xFF333333) : Colors.white,
+                        backgroundColor:
+                            isDarkMode ? const Color(0xFF333333) : Colors.white,
                         side: const BorderSide(color: AppTheme.grabGreen),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
@@ -3006,14 +3146,16 @@ Widget _buildVoiceModal(BuildContext context) {
     if (!mounted) return;
 
     // Get theme mode
-    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+    final isDarkMode =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
 
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
-        title: Text('Trip Completed', 
+        title: Text(
+          'Trip Completed',
           style: TextStyle(
             color: isDarkMode ? Colors.white : Colors.black,
           ),
@@ -3351,7 +3493,7 @@ Widget _buildVoiceModal(BuildContext context) {
         _currentNavigationStep >= _navigationSteps.length) {
       return const SizedBox.shrink();
     }
-    
+
     // Get theme provider to check dark mode status
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDarkMode = themeProvider.isDarkMode;
@@ -3361,7 +3503,7 @@ Widget _buildVoiceModal(BuildContext context) {
     return Column(
       children: [
         // Remove the redundant loading indicator when fetching route
-        
+
         // Top navigation bar
         Container(
           color: Colors.black.withOpacity(0.8),
@@ -3400,13 +3542,18 @@ Widget _buildVoiceModal(BuildContext context) {
                   GestureDetector(
                     onTap: () {
                       // Get theme mode
-                      final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
-                      
+                      final isDarkMode =
+                          Provider.of<ThemeProvider>(context, listen: false)
+                              .isDarkMode;
+
                       showDialog(
                         context: context,
                         builder: (context) => AlertDialog(
-                          backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
-                          title: Text('Cancel Trip?', 
+                          backgroundColor: isDarkMode
+                              ? const Color(0xFF252525)
+                              : Colors.white,
+                          title: Text(
+                            'Cancel Trip?',
                             style: TextStyle(
                               color: isDarkMode ? Colors.white : Colors.black,
                             ),
@@ -3414,20 +3561,27 @@ Widget _buildVoiceModal(BuildContext context) {
                           content: Text(
                             'Are you sure you want to cancel this trip? This will end the current navigation.',
                             style: TextStyle(
-                              color: isDarkMode ? Colors.grey.shade300 : Colors.black87,
+                              color: isDarkMode
+                                  ? Colors.grey.shade300
+                                  : Colors.black87,
                             ),
                           ),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context),
-                              child: Text('NO', style: TextStyle(color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700)),
+                              child: Text('NO',
+                                  style: TextStyle(
+                                      color: isDarkMode
+                                          ? Colors.grey.shade300
+                                          : Colors.grey.shade700)),
                             ),
                             TextButton(
                               onPressed: () {
                                 Navigator.pop(context);
                                 _cancelTrip(); // Use _cancelTrip instead of _endTrip
                               },
-                              child: Text('YES', style: TextStyle(color: Colors.red)),
+                              child: Text('YES',
+                                  style: TextStyle(color: Colors.red)),
                             ),
                           ],
                         ),
@@ -3528,7 +3682,9 @@ Widget _buildVoiceModal(BuildContext context) {
                       width: 60,
                       height: 60,
                       decoration: BoxDecoration(
-                        color: isDarkMode ? AppTheme.grabGreen.withOpacity(0.2) : AppTheme.grabGreen.withOpacity(0.1),
+                        color: isDarkMode
+                            ? AppTheme.grabGreen.withOpacity(0.2)
+                            : AppTheme.grabGreen.withOpacity(0.1),
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
@@ -3556,7 +3712,9 @@ Widget _buildVoiceModal(BuildContext context) {
                           currentStep['instruction'] as String,
                           style: TextStyle(
                             fontSize: 14,
-                            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+                            color: isDarkMode
+                                ? Colors.grey.shade300
+                                : Colors.grey.shade700,
                           ),
                         ),
                       ],
@@ -3567,7 +3725,8 @@ Widget _buildVoiceModal(BuildContext context) {
               // Progress indicator
               LinearProgressIndicator(
                 value: (_currentNavigationStep + 1) / _navigationSteps.length,
-                backgroundColor: isDarkMode ? Colors.grey.shade800 : Colors.grey.shade200,
+                backgroundColor:
+                    isDarkMode ? Colors.grey.shade800 : Colors.grey.shade200,
                 valueColor: const AlwaysStoppedAnimation(AppTheme.grabGreen),
               ),
               // Action buttons
@@ -3871,14 +4030,13 @@ Widget _buildVoiceModal(BuildContext context) {
   void _moveToCurrentLocation() {
     if (_mapController != null && _currentPosition != null) {
       // Use driver's actual position from current location
-      final driverPosition = LatLng(_currentPosition!.latitude!,
-          _currentPosition!.longitude!);
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
       // If there's an active request/order, move the map view higher
       if (_hasActiveRequest) {
         final adjustedPosition = LatLng(
-            driverPosition.latitude -
-                0.005, // Move up by 0.005 on the map
+            driverPosition.latitude - 0.005, // Move up by 0.005 on the map
             driverPosition.longitude);
 
         _mapController!.animateCamera(
@@ -3901,7 +4059,7 @@ Widget _buildVoiceModal(BuildContext context) {
           ),
         );
       }
-      
+
       // Update weather data for current location
       _fetchWeatherData();
     }
@@ -3909,37 +4067,41 @@ Widget _buildVoiceModal(BuildContext context) {
 
   void _updateMapStyleBasedOnTheme() {
     final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
-    _mapController?.setMapStyle(themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
+    _mapController?.setMapStyle(
+        themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
   }
 
   // Update the method for getting device context
   Future<Map<String, dynamic>> _getDeviceContextWithWeather() async {
     // Get basic device context
     Map<String, dynamic> deviceContext = await _deviceInfo.getDeviceContext();
-    
+
     // Override weather with our local _weatherData if it's available
     if (_weatherData != null) {
-      final weatherText = "${_weatherData!['main']}, ${_weatherData!['temperature'].toStringAsFixed(1)}°C ${_weatherData!['emoji']}";
+      final weatherText =
+          "${_weatherData!['main']}, ${_weatherData!['temperature'].toStringAsFixed(1)}°C ${_weatherData!['emoji']}";
       deviceContext['weather'] = weatherText;
       print('Using local weather data for Gemini: $weatherText');
     } else {
-      print('No local weather data available for Gemini, using DeviceInfo weather');
+      print(
+          'No local weather data available for Gemini, using DeviceInfo weather');
     }
-    
+
     return deviceContext;
   }
 
   // Build custom compass button that appears when map is rotated
   Widget _buildCompassButton() {
     final isDark = Provider.of<ThemeProvider>(context).isDarkMode;
-    
+
     if (!_showCompassButton) {
       return const SizedBox.shrink();
     }
-    
+
     // Position below AI chat button during navigation mode or when navigating to pickup
-    final double topPosition = (_isNavigationMode || _isNavigatingToPickup) ? 360 : 85;
-    
+    final double topPosition =
+        (_isNavigationMode || _isNavigatingToPickup) ? 360 : 85;
+
     return Positioned(
       right: 16,
       top: topPosition, // Position based on navigation state
@@ -3964,7 +4126,8 @@ Widget _buildVoiceModal(BuildContext context) {
             onTap: _resetMapBearing,
             child: Center(
               child: Transform.rotate(
-                angle: _mapBearing * (3.14159265359 / 180), // Convert degrees to radians
+                angle: _mapBearing *
+                    (3.14159265359 / 180), // Convert degrees to radians
                 child: const Icon(
                   Icons.explore,
                   color: AppTheme.grabGreen,
@@ -3977,17 +4140,17 @@ Widget _buildVoiceModal(BuildContext context) {
       ),
     );
   }
-  
+
   // Reset map bearing to north (0 degrees)
   Future<void> _resetMapBearing() async {
     if (_mapController != null) {
       // Convert LocationData to LatLng or use initial position
-      final LatLng targetPosition = _currentPosition != null 
-          ? LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!) 
+      final LatLng targetPosition = _currentPosition != null
+          ? LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!)
           : _initialPosition;
-      
+
       final double currentZoom = await _mapController!.getZoomLevel();
-      
+
       _mapController!.animateCamera(CameraUpdate.newCameraPosition(
         CameraPosition(
           target: targetPosition,
@@ -3995,7 +4158,7 @@ Widget _buildVoiceModal(BuildContext context) {
           bearing: 0.0,
         ),
       ));
-      
+
       // Hide compass after resetting
       setState(() {
         _showCompassButton = false;
@@ -4007,11 +4170,11 @@ Widget _buildVoiceModal(BuildContext context) {
   // Build country flag indicator positioned on the left side
   Widget _buildCountryIndicator() {
     final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
-    
+
     if (_isNavigationMode) {
       return const SizedBox.shrink();
     }
-    
+
     return Positioned(
       top: 55,
       left: 20,
@@ -4051,9 +4214,10 @@ Widget _buildVoiceModal(BuildContext context) {
   // New method to centralize the map focusing logic
   void _centerMapOnDriverPosition() {
     if (_mapController == null || _currentPosition == null) return;
-    
-    final driverPosition = LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-    
+
+    final driverPosition =
+        LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
     // Use newCameraPosition instead of just newLatLng to keep consistent zoom level
     _mapController!.animateCamera(
       CameraUpdate.newCameraPosition(

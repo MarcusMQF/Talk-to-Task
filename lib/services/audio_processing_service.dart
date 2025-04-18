@@ -21,7 +21,7 @@ class AudioProcessingService {
   static const int PRE_SPEECH_SILENCE_COUNT = 100;
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
-  static const String SERVER_URL = 'http://10.171.64.101:8000/upload/';
+  static const String SERVER_URL = 'http://10.171.64.167:8000/upload/';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
@@ -44,6 +44,9 @@ class AudioProcessingService {
   Function(bool isProcessing)? onProcessingStateChanged;
   Function(String baseText, String enhancedText, String geminiResponse)?
       onTranscriptionComplete;
+
+
+
 
   // Constructor
   AudioProcessingService() {
@@ -348,7 +351,7 @@ class AudioProcessingService {
         // Create Gemini prompt using the GeminiService
         final prompt = _geminiService.createGeminiPrompt(
             baseText, fineTunedText, deviceContext, country);
-
+        print(prompt);
         print('\nWaiting for Gemini response...');
         final geminiResponse =
             await _geminiService.generateOneTimeResponse(prompt);
