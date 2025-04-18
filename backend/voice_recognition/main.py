@@ -1,3 +1,4 @@
+# Simplified version with only the upload endpoint
 from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -12,12 +13,10 @@ from pathlib import Path
 import librosa
 from transformers.models.whisper import tokenization_whisper
 import time
-from pydub import AudioSegment
 import soundfile as sf
 import numpy as np
 import noisereduce as nr
 import subprocess
-from starlette.background import BackgroundTask
 import shutil
 
 # Add this for Malaysian model
@@ -308,80 +307,6 @@ async def transcribe_with_base_model(file_path: str):
         traceback.print_exc()
         return "Base model transcription failed"
 
-@app.post("/transcribe/")
-async def transcribe_audio(
-    file: UploadFile = File(...),
-    country: str = Form(None)
-):
-    try:
-        print("\n=== Received Request ===")
-        print(f"Country: '{country}'")
-        start_time = time.time()
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_path = temp_file.name
-            print(f"File saved at: {temp_path}")
-        print("Starting denoising process...")
-        denoiser = AudioDenoiser(sample_rate=48000)
-        denoised_result = await denoiser.process_audio(temp_path)
-        denoised_path = denoised_result["output_path"]
-        print(f"Audio denoised. Starting transcription...")
-        print(f"Noise reduction metrics: {denoised_result['metrics']}")
-        print("Starting parallel transcription...")
-        base_task = asyncio.create_task(transcribe_with_base_model(denoised_path))
-        fine_tuned_task = asyncio.create_task(
-            transcribe_with_fine_tuned_model(denoised_path, country)
-        ) if country in COUNTRY_MODELS else None
-        if fine_tuned_task:
-            base_result, fine_tuned_result = await asyncio.gather(base_task, fine_tuned_task)
-        else:
-            base_result = await base_task
-            fine_tuned_result = None
-        for path in [temp_path, denoised_path]:
-            if path and os.path.exists(path):
-                os.unlink(path)
-                print(f"Removed temporary file: {path}")
-        elapsed_time = time.time() - start_time
-        response_data = {
-            "base_model": {
-                "text": base_result,
-                "model": "faster-whisper-tiny"
-            },
-            "fine_tuned_model": {
-                "text": fine_tuned_result,
-                "model_name": COUNTRY_MODELS[country]["name"],
-                "model_id": COUNTRY_MODELS[country]["model_id"],
-                "language": COUNTRY_MODELS[country]["language"],
-                "using_faster_whisper": COUNTRY_MODELS[country].get("use_faster_whisper", False)
-            } if fine_tuned_result and country in COUNTRY_MODELS else None,
-            "country": country,
-            "processing_time": f"{elapsed_time:.2f} seconds",
-            "noise_reduction_metrics": denoised_result["metrics"],
-            "backend": "faster-whisper"
-        }
-        print("\n=== Response Data ===")
-        print(f"Base Model Result: {base_result}")
-        print(f"Fine-tuned Model Result: {fine_tuned_result}")
-        print(f"Country: {country}")
-        print(f"Total processing time: {elapsed_time:.2f} seconds")
-        return JSONResponse(
-            content=jsonable_encoder(response_data),
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
-    except Exception as e:
-        print(f"\nError in transcribe_audio: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        if 'temp_path' in locals() and temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
-        if 'denoised_path' in locals() and denoised_path and os.path.exists(denoised_path):
-            os.unlink(denoised_path)
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
-
 async def transcribe_with_fine_tuned_model(file_path: str, country: str):
     try:
         if country not in model_handlers:
@@ -405,209 +330,246 @@ async def transcribe_with_fine_tuned_model(file_path: str, country: str):
 class AudioDenoiser:
     def __init__(self, sample_rate: int = 48000, chunk_size_seconds: float = 5.0):
         self.sample_rate = sample_rate
-        self.chunk_size_seconds = chunk_size_seconds
-        print(f"Noise reduction initialized with {sample_rate}Hz sample rate, {chunk_size_seconds}s chunks")
+        print(f"Noise reduction initialized with {sample_rate}Hz sample rate")
 
-# Replace the entire audio denoiser process_audio method with this corrected version
-async def process_audio(self, file_path: str, output_format: str = 'wav') -> dict:
-    try:
-        print("\n=== Starting Audio Processing ===")
-        print(f"Input file: {file_path}")
-        
-        # Create output folder if needed
-        temp_dir = os.path.dirname(file_path)
-        output_path = os.path.join(temp_dir, f'denoised_{os.path.basename(file_path)}')
-        
-        # Convert to WAV if needed
-        wav_path = file_path
-        if not file_path.lower().endswith('.wav'):
-            wav_path = file_path + ".wav"
-            print(f"Converting to WAV format: {wav_path}")
+    async def process_audio(self, file_path: str, output_format: str = 'wav') -> dict:
+        try:
+            print("\n=== Starting Audio Processing ===")
+            print(f"Input file: {file_path}")
+            temp_dir = os.path.dirname(file_path)
+            wav_path = os.path.join(temp_dir, f'temp_{os.path.basename(file_path)}_{int(time.time())}.wav')
+            
+            # Convert to standard WAV format
+            print("Converting to WAV...")
             result = subprocess.run([
                 'ffmpeg',
                 '-i', file_path,
                 '-acodec', 'pcm_s16le',
                 '-ar', str(self.sample_rate),
                 '-ac', '1',
-                '-y',
                 wav_path
             ], capture_output=True, text=True)
             
             if result.returncode != 0:
                 raise Exception(f"FFmpeg conversion failed: {result.stderr}")
-        
-        # Read audio info
-        with sf.SoundFile(wav_path) as sound_file:
-            total_frames = len(sound_file)
-            sample_rate = sound_file.samplerate
-            channels = sound_file.channels
-        
-        print(f"Audio info: {total_frames} frames, {sample_rate}Hz, {channels} channels")
-        chunk_size_frames = int(self.chunk_size_seconds * sample_rate)
-        print(f"Processing in chunks of {chunk_size_frames} frames ({self.chunk_size_seconds}s)")
-        
-        output_path = wav_path.replace('.wav', '_denoised.wav')
-        total_original_energy = 0
-        total_denoised_energy = 0
-        num_samples = 0
-        
-        # Get noise profile from first part of audio
-        noise_profile_frames = min(int(0.5 * sample_rate), total_frames)
-        with sf.SoundFile(wav_path) as infile:
-            noise_profile = infile.read(noise_profile_frames, dtype='float32')
-            if channels > 1:
-                noise_profile = noise_profile.mean(axis=1)
-        
-        # Process audio in chunks
-        with sf.SoundFile(wav_path) as infile, sf.SoundFile(
-            output_path, 'w', samplerate=sample_rate, channels=1, format='WAV',
-            subtype='PCM_16'
-        ) as outfile:
-            infile.seek(0)
-            processed_frames = 0
-            while processed_frames < total_frames:
-                chunk_size = min(chunk_size_frames, total_frames - processed_frames)
-                audio_chunk = infile.read(chunk_size, dtype='float32')
+            
+            # Read the entire WAV file
+            with sf.SoundFile(wav_path) as sound_file:
+                total_frames = len(sound_file)
+                sample_rate = sound_file.samplerate
+                channels = sound_file.channels
+                print(f"Audio info: {total_frames} frames, {sample_rate}Hz, {channels} channels")
+                
+            # Get noise profile (from first 0.5 seconds)
+            noise_profile_frames = min(int(0.5 * sample_rate), total_frames)
+            with sf.SoundFile(wav_path) as infile:
+                noise_profile = infile.read(noise_profile_frames, dtype='float32')
                 if channels > 1:
-                    audio_chunk = audio_chunk.mean(axis=1)
+                    noise_profile = noise_profile.mean(axis=1)
+            
+            # Read the entire audio file
+            with sf.SoundFile(wav_path) as infile:
+                audio_data = infile.read(dtype='float32')
+                if channels > 1:
+                    audio_data = audio_data.mean(axis=1)
                 
-                chunk_original_energy = np.sum(audio_chunk ** 2)
-                total_original_energy += chunk_original_energy
-                num_samples += len(audio_chunk)
+            # Calculate original energy
+            original_energy = np.sum(audio_data ** 2)
+            num_samples = len(audio_data)
+            
+            # Process the entire audio at once
+            print(f"Processing entire audio file ({num_samples} samples)...")
+            denoised_audio = await asyncio.to_thread(
+                nr.reduce_noise,
+                y=audio_data,
+                sr=sample_rate,
+                y_noise=noise_profile,
+                stationary=True,
+                prop_decrease=0.75,
+                freq_mask_smooth_hz=100,
+                n_jobs=1
+            )
+            
+            # Calculate denoised energy
+            denoised_energy = np.sum(denoised_audio ** 2)
+            
+            # Save the denoised audio
+            output_path = wav_path.replace('.wav', '_denoised.wav')
+            with sf.SoundFile(
+                output_path, 'w', samplerate=sample_rate, channels=1, format='WAV',
+                subtype='PCM_16'
+            ) as outfile:
+                outfile.write(denoised_audio)
+            
+            # Calculate metrics
+            if num_samples > 0:
+                original_rms = np.sqrt(original_energy / num_samples)
+                denoised_rms = np.sqrt(denoised_energy / num_samples)
+                noise_reduction = original_rms - denoised_rms
+            else:
+                original_rms = denoised_rms = noise_reduction = 0
                 
-                print(f"Processing chunk {processed_frames}-{processed_frames + len(audio_chunk)}...")
-                denoised_chunk = await asyncio.to_thread(
-                    nr.reduce_noise,
-                    y=audio_chunk,
-                    sr=sample_rate,
-                    y_noise=noise_profile if processed_frames == 0 else None,
-                    stationary=True,
-                    prop_decrease=0.75,
-                    freq_mask_smooth_hz=100,
-                    n_jobs=1
+            print("\n=== Processing Complete ===")
+            print(f"Saved to: {output_path}")
+            print(f"Original RMS: {original_rms:.4f}")
+            print(f"Denoised RMS: {denoised_rms:.4f}")
+            print(f"Noise Reduction: {noise_reduction:.4f / original_rms:.4f} * 100")
+            
+            # Cleanup
+            if os.path.exists(wav_path):
+                os.unlink(wav_path)
+                
+            return {
+                "output_path": output_path,
+                "metrics": {
+                    "original_rms": float(original_rms),
+                    "denoised_rms": float(denoised_rms),
+                    "noise_reduction": float(noise_reduction)
+                }
+            }
+        except Exception as e:
+            if 'wav_path' in locals() and os.path.exists(wav_path):
+                os.unlink(wav_path)
+            print(f"Error in audio processing: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
+@app.post("/upload/")
+async def upload_and_process_audio(
+    file: UploadFile = File(...),
+    country: str = Form(None)
+):
+    """Process uploaded audio: denoise and transcribe in one endpoint"""
+    request_id = f"req_{int(time.time())}_{os.urandom(4).hex()}"
+    print(f"\n=== REQUEST {request_id} - Audio Upload ===")
+    print(f"Country context: {country}")
+    print(f"File name: {file.filename}")
+    
+    # Track processing stages and timing
+    stages = {
+        "start_time": time.time(),
+        "received": False,
+        "denoised": False,
+        "transcribed": False,
+        "complete": False
+    }
+    
+    temp_path = None
+    denoised_path = None
+    
+    try:
+        # Optimize memory before processing
+        optimize_gpu_memory()
+        
+        # Create temp directory with context manager for auto-cleanup
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Save uploaded file
+            temp_path = os.path.join(temp_dir, 'input.wav')
+            content = await file.read()
+            with open(temp_path, 'wb') as f:
+                f.write(content)
+            print(f"Saved audio file ({len(content)/1024:.2f} KB) to: {temp_path}")
+            stages["received"] = True
+            
+            # Step 1: Denoise the audio with timeout protection
+            print(f"Request {request_id}: Starting audio denoising...")
+            try:
+                denoising_task = asyncio.create_task(
+                    asyncio.wait_for(
+                        AudioDenoiser(sample_rate=16000, chunk_size_seconds=0.5).process_audio(temp_path),
+                        timeout=60.0  # 60 second timeout for denoising
+                    )
+                )
+                denoised_result = await denoising_task
+                denoised_path = denoised_result["output_path"]
+                print(f"Request {request_id}: Audio denoised in {time.time() - stages['start_time']:.2f}s")
+                stages["denoised"] = True
+            except asyncio.TimeoutError:
+                raise Exception("Audio denoising timed out - file may be too large or complex")
+            
+            # Step 2: Start transcription immediately after denoising
+            print(f"Request {request_id}: Starting transcription...")
+            try:
+                transcription_tasks = [
+                    asyncio.create_task(transcribe_with_base_model(denoised_path))
+                ]
+                
+                if country in model_handlers:
+                    transcription_tasks.append(
+                        asyncio.create_task(transcribe_with_fine_tuned_model(denoised_path, country))
+                    )
+                
+                # Wait for all transcriptions with timeout
+                results = await asyncio.wait_for(
+                    asyncio.gather(*transcription_tasks, return_exceptions=True),
+                    timeout=120.0  # 2 minute timeout for transcription
                 )
                 
-                chunk_denoised_energy = np.sum(denoised_chunk ** 2)
-                total_denoised_energy += chunk_denoised_energy
-                outfile.write(denoised_chunk)
-                processed_frames += len(audio_chunk)
-                print(f"Progress: {processed_frames}/{total_frames} frames " 
-                      f"({processed_frames/total_frames*100:.1f}%)")
+                # Process results
+                base_result = results[0] if not isinstance(results[0], Exception) else "Transcription failed"
+                fine_tuned_result = results[1] if len(results) > 1 and not isinstance(results[1], Exception) else None
+                
+                print(f"Request {request_id}: Transcription completed in {time.time() - stages['start_time']:.2f}s")
+                stages["transcribed"] = True
+            except asyncio.TimeoutError:
+                raise Exception("Transcription timed out - audio may be too long or complex")
+            
+            # Generate response
+            elapsed_time = time.time() - stages["start_time"]
+            print(f"Request {request_id}: Processing complete in {elapsed_time:.2f} seconds")
+            
+            response_data = {
+                "base_model": {
+                    "text": base_result,
+                    "model": "faster-whisper-tiny"
+                },
+                "fine_tuned_model": {
+                    "text": fine_tuned_result,
+                    "model_name": COUNTRY_MODELS[country]["name"] if country in COUNTRY_MODELS else None,
+                    "model_id": COUNTRY_MODELS[country]["model_id"] if country in COUNTRY_MODELS else None
+            } if fine_tuned_result else None,
+                "country": country,
+                "processing_time": f"{elapsed_time:.2f} seconds",
+                "denoising_metrics": denoised_result["metrics"],
+                "request_id": request_id
+            }
+            
+            print(f"Request {request_id}: Base model result: {base_result}")
+            print(f"Request {request_id}: Fine-tuned model result: {fine_tuned_result}")
+            stages["complete"] = True
+            
+            return JSONResponse(
+                content=jsonable_encoder(response_data),
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
         
-        # Calculate metrics
-        if num_samples > 0:
-            original_rms = np.sqrt(total_original_energy / num_samples)
-            denoised_rms = np.sqrt(total_denoised_energy / num_samples)
-            noise_reduction = original_rms - denoised_rms
+    except Exception as e:
+        failed_stage = [k for k, v in stages.items() if v == False][0] if stages else "unknown"
+        print(f"Request {request_id} failed at stage: {failed_stage}")
+        print(f"Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Return appropriate error based on failure type
+        if "timed out" in str(e).lower():
+            return JSONResponse(
+                status_code=408,
+                content={"error": "Processing timed out", "message": str(e), "request_id": request_id}
+            )
+        elif "ffmpeg" in str(e).lower() or "audio format" in str(e).lower():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Invalid audio format", "message": str(e), "request_id": request_id}
+            )
         else:
-            original_rms = denoised_rms = noise_reduction = 0
-            
-        print("\n=== Processing Complete ===")
-        print(f"Saved to: {output_path}")
-        print(f"Original RMS: {original_rms:.4f}")
-        print(f"Denoised RMS: {denoised_rms:.4f}")
-        print(f"Noise Reduction: {noise_reduction:.4f}")
-        
-        # Cleanup original WAV if it was converted
-        if wav_path != file_path and os.path.exists(wav_path):
-            os.unlink(wav_path)
-            
-        return {
-            "output_path": output_path,
-            "metrics": {
-                "original_rms": float(original_rms),
-                "denoised_rms": float(denoised_rms),
-                "noise_reduction": float(noise_reduction)
-            }
-        }
-        
-    except Exception as e:
-        print(f"Error in audio processing: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        # Cleanup
-        if 'wav_path' in locals() and wav_path != file_path and os.path.exists(wav_path):
-            try:
-                os.unlink(wav_path)
-            except:
-                pass
-        
-        raise
-    
-@app.post("/denoise/")
-async def denoise_audio(file: UploadFile = File(...)):
-    temp_path = None
-    wav_path = None
-    denoised_path = None
-    try:
-        print("\n=== Received Audio File ===")
-        print(f"Filename: {file.filename}")
-        print(f"Content type: {file.content_type}")
-        temp_dir = tempfile.mkdtemp()
-        print(f"Created temp directory: {temp_dir}")
-        temp_path = os.path.join(temp_dir, 'input.m4a')
-        content = await file.read()
-        with open(temp_path, 'wb') as f:
-            f.write(content)
-        print(f"Saved original file: {temp_path}")
-        wav_path = os.path.join(temp_dir, 'converted.wav')
-        print("Converting to WAV...")
-        result = subprocess.run([
-            'ffmpeg',
-            '-i', temp_path,
-            '-acodec', 'pcm_s16le',
-            '-ar', '48000',
-            '-ac', '1',
-            '-y',
-            wav_path
-        ], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise Exception(f"FFmpeg conversion failed: {result.stderr}")
-        denoiser = AudioDenoiser(sample_rate=48000, chunk_size_seconds=2.0)
-        result = await denoiser.process_audio(wav_path)
-        denoised_path = result["output_path"]
-        if not os.path.exists(denoised_path):
-            raise Exception("Denoising failed to create output file")
-        response = FileResponse(
-            denoised_path,
-            media_type='audio/wav',
-            headers={
-                "X-Original-RMS": str(result["metrics"]["original_rms"]),
-                "X-Denoised-RMS": str(result["metrics"]["denoised_rms"]),
-                "X-Noise-Reduction": str(result["metrics"]["noise_reduction"])
-            }
-        )
-        def cleanup():
-            try:
-                for path in [temp_path, wav_path, denoised_path]:
-                    if path and os.path.exists(path):
-                        os.unlink(path)
-                if os.path.exists(temp_dir):
-                    os.rmdir(temp_dir)
-                print("Cleanup completed")
-            except Exception as e:
-                print(f"Cleanup error: {e}")
-        response.background = BackgroundTask(cleanup)
-        return response
-    except Exception as e:
-        print(f"Error processing request: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        try:
-            for path in [temp_path, wav_path, denoised_path]:
-                if path and os.path.exists(path):
-                    os.unlink(path)
-            if 'temp_dir' in locals() and os.path.exists(temp_dir):
-                os.rmdir(temp_dir)
-        except Exception as cleanup_error:
-            print(f"Cleanup error: {cleanup_error}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Server error", "message": str(e), "request_id": request_id}
+            )
 
-@app.get("/system-info/")
+# Just keep system-info and echo_test for diagnostics
+@app.get("/system_info/")
 async def system_info():
     """Get information about the system and GPU"""
     import platform
@@ -616,7 +578,6 @@ async def system_info():
             "platform": platform.platform(),
             "python_version": platform.python_version(),
             "torch_version": torch.__version__,
-            "faster_whisper": True
         },
         "gpu": {
             "available": torch.cuda.is_available(),
@@ -635,207 +596,8 @@ async def system_info():
             })
     return info
 
-@app.post("/transcribe_chunk/")
-async def transcribe_chunk(
-    file: UploadFile = File(...), 
-    streaming: bool = Form(False),
-    country: str = Form(None)
-):
-    """Transcribe a single audio chunk for streaming recognition"""
-    try:
-        content = await file.read()
-        print(f"Received chunk from {country}, size: {len(content)} bytes")
-        
-        # Check if content is valid
-        if len(content) < 44:  # Minimum WAV header size
-            return {"error": "Audio chunk too small", "partial_transcript": ""}
-        
-        # Create a temp dir to work in
-        temp_dir = tempfile.mkdtemp()
-        try:
-            # Save the content as is to a temp file
-            temp_chunk_path = os.path.join(temp_dir, "chunk.wav")
-            with open(temp_chunk_path, "wb") as f:
-                f.write(content)
-                
-            print(f"Saved chunk to: {temp_chunk_path}")
-            
-            # Skip denoising for now to debug the file format issue
-            # Just try to transcribe directly
-            try:
-                if country and country in model_handlers:
-                    transcript = await model_handlers[country].transcribe(temp_chunk_path)
-                else:
-                    segments, info = await asyncio.to_thread(
-                        base_model.transcribe,
-                        temp_chunk_path,
-                        beam_size=1,
-                        language="en",
-                        task="transcribe",
-                        vad_filter=True
-                    )
-                    transcript = " ".join(segment.text for segment in segments)
-                
-                print(f"Successfully transcribed chunk: '{transcript}'")
-                return {
-                    "partial_transcript": transcript,
-                    "denoising_metrics": {"original_rms": 0, "denoised_rms": 0, "noise_reduction": 0}
-                }
-            except Exception as transcribe_error:
-                print(f"Transcription failed, trying wav conversion: {transcribe_error}")
-                
-                # If direct transcription fails, try converting to WAV first
-                fixed_wav_path = os.path.join(temp_dir, "fixed.wav")
-                result = subprocess.run([
-                    'ffmpeg',
-                    '-i', temp_chunk_path,
-                    '-acodec', 'pcm_s16le',
-                    '-ar', '16000',
-                    '-ac', '1',
-                    '-y',
-                    fixed_wav_path
-                ], capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    print("Converted to WAV format successfully")
-                    # Now try transcription on the converted file
-                    if country and country in model_handlers:
-                        transcript = await model_handlers[country].transcribe(fixed_wav_path)
-                    else:
-                        segments, info = await asyncio.to_thread(
-                            base_model.transcribe,
-                            fixed_wav_path,
-                            beam_size=1,
-                            language="en",
-                            task="transcribe",
-                            vad_filter=True
-                        )
-                        transcript = " ".join(segment.text for segment in segments)
-                    
-                    print(f"Successfully transcribed converted chunk: '{transcript}'")
-                    return {
-                        "partial_transcript": transcript,
-                        "denoising_metrics": {"original_rms": 0, "denoised_rms": 0, "noise_reduction": 0}
-                    }
-                else:
-                    raise Exception(f"FFmpeg conversion failed: {result.stderr}")
-                
-        finally:
-            # Clean up temp files
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as e:
-                print(f"Error cleaning up temp dir: {e}")
-                
-    except Exception as e:
-        print(f"Error transcribing chunk: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e), "partial_transcript": ""}
-
 @app.post("/echo_test/")
 async def echo_test(file: UploadFile = File(...)):
     content = await file.read()
     size = len(content)
     return {"received_bytes": size, "status": "ok"}
-
-@app.post("/upload/")
-async def upload_and_process_audio(
-    file: UploadFile = File(...),
-    country: str = Form(None)
-):
-    """Process uploaded audio: denoise and transcribe in one endpoint"""
-    temp_path = None
-    denoised_path = None
-    try:
-        print("\n=== Received Audio Upload ===")
-        print(f"Country context: {country}")
-        start_time = time.time()
-        
-        # Save uploaded file
-        temp_dir = tempfile.mkdtemp()
-        temp_path = os.path.join(temp_dir, 'input.wav')
-        content = await file.read()
-        with open(temp_path, 'wb') as f:
-            f.write(content)
-        print(f"Saved audio file ({len(content)/1024:.2f} KB) to: {temp_path}")
-        
-        # Step 1: Denoise the audio
-        print("Starting audio denoising...")
-        denoiser = AudioDenoiser(sample_rate=16000, chunk_size_seconds=0.5)
-        denoised_result = await denoiser.process_audio(temp_path)
-        denoised_path = denoised_result["output_path"]
-        print(f"Audio denoised: {denoised_path}")
-        
-        # Step 2: Transcribe with appropriate model
-        print("Starting transcription...")
-        base_task = asyncio.create_task(transcribe_with_base_model(denoised_path))
-        fine_tuned_task = asyncio.create_task(
-            transcribe_with_fine_tuned_model(denoised_path, country)
-        ) if country in model_handlers else None
-        
-        if fine_tuned_task:
-            base_result, fine_tuned_result = await asyncio.gather(base_task, fine_tuned_task)
-        else:
-            base_result = await base_task
-            fine_tuned_result = None
-        
-        # Generate response
-        elapsed_time = time.time() - start_time
-        print(f"\n=== Processing complete in {elapsed_time:.2f} seconds ===")
-        
-        response_data = {
-            "base_model": {
-                "text": base_result,
-                "model": "faster-whisper-tiny"
-            },
-            "fine_tuned_model": {
-                "text": fine_tuned_result,
-                "model_name": COUNTRY_MODELS[country]["name"] if country in COUNTRY_MODELS else None,
-                "model_id": COUNTRY_MODELS[country]["model_id"] if country in COUNTRY_MODELS else None
-            } if fine_tuned_result else None,
-            "country": country,
-            "processing_time": f"{elapsed_time:.2f} seconds",
-            "denoising_metrics": denoised_result["metrics"]
-        }
-        
-        print("Base model result:", base_result)
-        print("Fine-tuned model result:", fine_tuned_result)
-        
-        # Clean up temp files
-        for path in [temp_path, denoised_path]:
-            if path and os.path.exists(path):
-                os.unlink(path)
-                print(f"Removed temporary file: {path}")
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        
-        return JSONResponse(
-            content=jsonable_encoder(response_data),
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
-        
-    except Exception as e:
-        print(f"\nError in upload_and_process_audio: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        # Clean up any temp files
-        try:
-            for path in [temp_path, denoised_path]:
-                if path and os.path.exists(path):
-                    os.unlink(path)
-            if 'temp_dir' in locals() and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-        except Exception as cleanup_error:
-            print(f"Cleanup error: {cleanup_error}")
-            
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
-    
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
-

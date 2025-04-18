@@ -21,9 +21,7 @@ class AudioProcessingService {
   static const int PRE_SPEECH_SILENCE_COUNT = 100;
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
-  // Server URLs
-  static const String SERVER_URL = 'http://192.168.159.244:8000/transcribe';
-  static const String DENOISE_URL = 'http://192.168.159.244:8000/denoise';
+  static const String SERVER_URL = 'http://10.171.64.101:8000/upload/';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
@@ -47,6 +45,25 @@ class AudioProcessingService {
   Function(String baseText, String enhancedText, String geminiResponse)?
       onTranscriptionComplete;
 
+  // Constructor
+  AudioProcessingService() {
+    // Initialize in the background with better error handling
+    try {
+      initialize().then((_) {
+        print('AudioProcessingService initialization complete');
+      }).catchError((error) {
+        print('AudioProcessingService initialization error: $error');
+      });
+    } catch (e) {
+      print('Fatal error in AudioProcessingService constructor: $e');
+    }
+  }
+  // Get temporary file path for recording
+  Future<String> getTempFilePath() async {
+    final dir = await getTemporaryDirectory();
+    return p.join(dir.path, 'recorded_audio.wav');
+  }
+
   Future<void> initialize() async {
     // Initialize device info service
     ProcessSignal.sigterm.watch().listen((_) {
@@ -63,25 +80,6 @@ class AudioProcessingService {
     print('Device context: ${context.toString()}');
   }
 
-  // Constructor
-AudioProcessingService() {
-  // Initialize in the background with better error handling
-  try {
-    initialize().then((_) {
-      print('AudioProcessingService initialization complete');
-    }).catchError((error) {
-      print('AudioProcessingService initialization error: $error');
-    });
-  } catch (e) {
-    print('Fatal error in AudioProcessingService constructor: $e');
-  }
-}
-  // Get temporary file path for recording
-  Future<String> _getTempFilePath() async {
-    final dir = await getTemporaryDirectory();
-    return p.join(dir.path, 'recorded_audio.wav');
-  }
-
   // Start recording method
   Future<void> startRecording() async {
     try {
@@ -96,7 +94,7 @@ AudioProcessingService() {
         throw Exception('Microphone permission denied');
       }
 
-      final path = await _getTempFilePath();
+      final path = await getTempFilePath();
       print('Recording path: $path');
 
       // Start recording with optimized settings
@@ -130,7 +128,7 @@ AudioProcessingService() {
       }
 
       // Start monitoring amplitude
-      _startAmplitudeMonitoring();
+      startAmplitudeMonitoring();
     } catch (e) {
       print('Error in startRecording: $e');
       _isRecording = false;
@@ -146,7 +144,7 @@ AudioProcessingService() {
   }
 
   // Monitor audio amplitude
-  void _startAmplitudeMonitoring() {
+  void startAmplitudeMonitoring() {
     // Ensure no duplicate timers
     _amplitudeTimer?.cancel();
 
@@ -210,7 +208,7 @@ AudioProcessingService() {
             if (_silenceCount >= _silenceDuration) {
               print('Recording stopped - Silence duration reached');
               timer.cancel();
-              _stopAndSendRecording();
+              stopAndSendRecording();
             }
           } else {
             _silenceCount = 0;
@@ -227,7 +225,7 @@ AudioProcessingService() {
   }
 
   // Stop recording and process audio
-  Future<void> _stopAndSendRecording() async {
+  Future<void> stopAndSendRecording() async {
     try {
       print('\n=== Stopping Recording ===');
 
@@ -263,28 +261,33 @@ AudioProcessingService() {
         onTranscriptionUpdate!("Processing audio...");
       }
 
-      await _uploadAudio(file);
+      await uploadAudio(file);
     } catch (e) {
-      print('Error in _stopAndSendRecording: $e');
+      print('Error in stopAndSendRecording: $e');
       _isProcessing = false;
 
       if (onProcessingStateChanged != null) {
         onProcessingStateChanged!(false);
-      }
-
-      if (onTranscriptionUpdate != null) {
         onTranscriptionUpdate!("Error: Failed to process recording");
       }
     }
   }
 
-// Modify the _uploadAudio method to better handle large files
-  Future<void> _uploadAudio(File file) async {
+  Future<void> uploadAudio(File file) async {
     try {
+      _isProcessing = true;
+
+      final audioData = await file.readAsBytes();
+
       print('\n=== Starting Audio Upload Process ===');
       print('File details:');
       print('- Path: ${file.path}');
       print('- Size: ${await file.length()} bytes');
+      print('📤 URL: $SERVER_URL');
+      print(
+          '📦 Audio size: ${(audioData.length / 1024).toStringAsFixed(2)} KB');
+
+      final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
 
       // Check if processing has been cancelled
       if (!_isProcessing) {
@@ -292,176 +295,58 @@ AudioProcessingService() {
         return;
       }
 
-      // For very large files, skip denoising entirely
-      final fileSize = await file.length();
-      List<int> audioData;
-
-      if (fileSize > 300000) {
-        print('File too large, skipping denoising completely');
-        audioData = await file.readAsBytes();
-      } else {
-        // For smaller files, try denoising with timeout
-        print('\n=== Step 1: Audio Denoising ===');
-        final denoisedData = await _denoiseAudio(file);
-
-        if (denoisedData == null || !_isProcessing) {
-          print('Denoising failed or processing cancelled, aborting');
-          return;
-        }
-
-        audioData = denoisedData;
-      }
-
-      // Check again if processing has been cancelled
-      if (!_isProcessing) {
-        print('Processing cancelled after denoising, aborting transcription');
-        return;
-      }
-
-      // Step 2: Transcription
-      print('\n=== Step 2: Transcription ===');
-      await _transcribeAudio(audioData);
-    } catch (e, stackTrace) {
-      print('Error in audio processing:');
-      print('Error: $e');
-      print('Stack trace:\n$stackTrace');
-
-      if (_isProcessing && onProcessingStateChanged != null) {
-        onProcessingStateChanged!(false);
-      }
-
-      if (onTranscriptionUpdate != null) {
-        onTranscriptionUpdate!("Error: Failed to process audio");
-      }
-      _isProcessing = false;
-    }
-  }
-
-  Future<List<int>?> _denoiseAudio(File file) async {
-    try {
-      final fileSize = await file.length();
-      print('File size for denoising: $fileSize bytes');
-
-      // MUCH MORE AGGRESSIVE size limit - skip denoising for all but very small files
-      if (fileSize > 150000) {
-        // Lower threshold to 150KB
-        print(
-            'Audio file size ($fileSize bytes) exceeds threshold, skipping denoising entirely');
-        return await file.readAsBytes();
-      }
-
-      // For smaller files, use a more reliable approach
-      final bytes = await file.readAsBytes();
-
-      try {
-        // Set up a completer with timeout to handle the denoising operation
-        final completer = Completer<List<int>>();
-
-        // Set a timer to resolve with original audio if denoising takes too long
-        final timer = Timer(const Duration(seconds: 3), () {
-          if (!completer.isCompleted) {
-            print(
-                'Denoising operation timed out after 3 seconds, using original audio');
-            completer.complete(bytes);
-          }
-        });
-
-        // Start the request
-        print('Sending to denoising API with strict 3-second timeout...');
-        final request =
-            http.MultipartRequest('POST', Uri.parse('$DENOISE_URL/'));
-
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'file',
-            bytes,
-            filename: 'audio.wav',
-            contentType: MediaType('audio', 'wav'),
-          ),
-        );
-
-        // Handle the response
-        final response = await request.send().timeout(
-          const Duration(seconds: 3),
-          onTimeout: () {
-            print('HTTP request timed out, using original audio');
-            throw TimeoutException('Denoising HTTP request timed out');
-          },
-        );
-
-        // Cancel the timer since we got a response
-        timer.cancel();
-
-        if (response.statusCode == 200 && !completer.isCompleted) {
-          final denoisedAudio = await response.stream.toBytes();
-          if (denoisedAudio.isNotEmpty) {
-            completer.complete(denoisedAudio);
-          } else {
-            completer.complete(bytes);
-          }
-        } else if (!completer.isCompleted) {
-          completer.complete(bytes);
-        }
-
-        return await completer.future;
-      } catch (e) {
-        print('Denoising error: $e - Using original audio');
-        return bytes;
-      }
-    } catch (e) {
-      print('Error preparing for denoising: $e');
-      return null;
-    }
-  }
-
-  // Transcribe audio and process with Gemini
-  Future<void> _transcribeAudio(List<int> audioData) async {
-    try {
-      if (onTranscriptionUpdate != null) {
-        onTranscriptionUpdate!("Processing audio...");
-      }
-
-      print('Preparing transcription request...');
-      final request = http.MultipartRequest('POST', Uri.parse('$SERVER_URL/'));
-
+      // Add audio file
       request.files.add(
         http.MultipartFile.fromBytes(
           'file',
           audioData,
-          filename: 'denoised_audio.wav',
+          filename: 'audio.wav',
           contentType: MediaType('audio', 'wav'),
         ),
       );
 
-      // Get device context
-      Map<String, dynamic> deviceContext = await _deviceInfo.getDeviceContext();
-      final country = deviceContext['location'] ?? "Unknown";
+      // Get device context for country
+      Map<String, dynamic> deviceContext =
+          await _deviceInfo.getDeviceContext(needLocation: true);
+      final country = deviceContext['location'] ??
+          "Malaysia"; // Default to Malaysia if location fails
 
+      print('📍 Using country: $country');
       request.fields['country'] = country;
-      print('Sending to transcription API...');
-      print('- Audio size: ${audioData.length} bytes');
-      print('- Country: $country');
 
-      final response = await request.send();
+      print('📱 Device context details:');
+      deviceContext.forEach((key, value) {
+        print('  - $key: $value');
+      });
+
+      final stopwatch = Stopwatch()..start();
+      print('📤 Sending request to backend...');
+      final response = await request.send().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          print('❌ Backend request timed out after 15 seconds');
+          throw TimeoutException('Backend request timed out');
+        },
+      );
+
+      final responseTime = stopwatch.elapsedMilliseconds;
       final responseData = await http.Response.fromStream(response);
 
-      print('Transcription response received:');
-      print('- Status code: ${response.statusCode}');
+      print('\n=== 📥 BACKEND RESPONSE ===');
+      print('⏱️ Response received in ${responseTime}ms');
+      print('📊 Status code: ${response.statusCode}');
 
+      // Process the response
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(responseData.body);
-        print('Transcription successful:');
-        print('- Base model: ${jsonResponse['base_model']['text']}');
-        print(
-            '- Fine-tuned model: ${jsonResponse['fine_tuned_model']?['text']}');
 
         // Get transcriptions
         final baseText = jsonResponse['base_model']['text'];
         final fineTunedText = jsonResponse['fine_tuned_model']?['text'] ??
             "No fine-tuned model available for $country";
 
-        // Create Gemini prompt
-        final prompt = _createGeminiPrompt(
+        // Create Gemini prompt using the GeminiService
+        final prompt = _geminiService.createGeminiPrompt(
             baseText, fineTunedText, deviceContext, country);
 
         print('\nWaiting for Gemini response...');
@@ -474,7 +359,7 @@ AudioProcessingService() {
 
         _isProcessing = false;
 
-        // Notify through callback
+        // Notify through callbacks
         if (onProcessingStateChanged != null) {
           onProcessingStateChanged!(false);
         }
@@ -484,10 +369,10 @@ AudioProcessingService() {
         }
       } else {
         throw Exception(
-            'Transcription failed: ${response.statusCode}\n${responseData.body}');
+            'Server returned ${response.statusCode}: ${responseData.body}');
       }
     } catch (e) {
-      print('\n❌ Error in transcription processing: $e');
+      print('Error in audio processing: $e');
       _isProcessing = false;
 
       if (onProcessingStateChanged != null) {
@@ -495,88 +380,16 @@ AudioProcessingService() {
       }
 
       if (onTranscriptionUpdate != null) {
-        onTranscriptionUpdate!("Error processing speech. Please try again.");
+        onTranscriptionUpdate!("Error: Failed to process audio");
       }
     }
-  }
-
-  // Create Gemini prompt with relevant context
-  String _createGeminiPrompt(String baseText, String fineTunedText,
-      Map<String, dynamic> deviceContext, String country) {
-    // This would normally be provided by the RideScreen
-    // For now, we use placeholders
-    bool isOnline = true;
-    bool hasActiveRequest = false;
-
-    return '''
-    Transcript A (General Model): $baseText  
-    Transcript B (Local Model): $fineTunedText  
-
-    You are a smart, friendly voice assistant in a ride-hailing app. 
-    The driver is currently ${isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-    ${hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
-
-    Step 1:  
-    Briefly review both transcripts. If either contains relevant info about the driver's situation (e.g., plans, concerns, questions), use it.  
-    If the transcripts are unclear, irrelevant, or not related to driving, ignore them. Prioritize Transcript B if needed.
-
-    Step 2:  
-    Generate realistic driver and city data based on typical patterns and time of day:
-    - Total rides completed today (e.g., 3–10)
-    - Total earnings today (e.g., RM40–RM200)
-    - 3 nearby areas with random demand levels: High / Medium / Low
-    - Optional surge zone (1 area only, with 1.2x–1.8x multiplier)
-
-    Use the real-time device context:
-    - Location: $country  
-    - Battery: ${deviceContext['battery'] ?? 'Unknown'}  
-    - Network: ${deviceContext['network'] ?? 'Unknown'}  
-    - Time: ${deviceContext['time'] ?? 'Unknown'}  
-    - Weather: ${deviceContext['weather'] ?? 'Unknown'}  
-
-    Step 3:  
-    Create a short, natural-sounding assistant message using 2–4 of the most relevant details. You may include:
-    - Suggestions on where to go next
-    - Earnings or ride count updates
-    - Surge opportunities
-    - Battery or break reminders
-    - Weather or traffic tips
-    - Motivation
-
-    Message Rules:
-    - Only output step 3.
-    - Speak naturally, as if voiced in-app
-    - Don't repeat the same fact in different ways
-    - Only include useful, moment-relevant info
-    - Keep it under 3 sentences
-
-    Final Output:  
-    One friendly and helpful message that feels human and situation-aware.
-    ''';
-  }
-
-  // Update Gemini prompt with ride-specific context
-  Future<void> updatePromptContext({
-    required bool isOnline,
-    required bool hasActiveRequest,
-    String? pickupLocation,
-    String? pickupDetail,
-    String? destination,
-    String? paymentMethod,
-    String? fareAmount,
-    String? tripDistance,
-    String? estimatedPickupTime,
-    String? estimatedTripDuration,
-  }) async {
-    // This method would update the context used for Gemini prompts
-    // The actual implementation would store these values for use in _createGeminiPrompt
   }
 
   // Manual methods for controlling recording
   Future<void> stopRecording() async {
     if (_isRecording) {
       _amplitudeTimer?.cancel();
-      await _stopAndSendRecording();
+      await stopAndSendRecording();
     }
   }
 

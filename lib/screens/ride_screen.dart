@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:async';
 import 'package:flutter/physics.dart';
+import 'package:talk_to_task/services/audio_processing_service.dart';
 import '../constants/app_theme.dart';
 import '../constants/map_styles.dart';
 import '../providers/voice_assistant_provider.dart';
@@ -16,7 +17,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:location/location.dart';
-import 'package:http_parser/http_parser.dart';
 import '../services/gemini_service.dart';
 import '../services/wake_word.dart';
 import '../services/get_device_info.dart';
@@ -88,12 +88,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Voice Recognition Module
   // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-  static const String SERVER_URL = 'http://10.167.66.116:8000/transcribe/';
-  static const String DENOISE_URL = 'http://10.167.66.116:8000/denoise/';
 
   final AudioRecorder _recorder = AudioRecorder();
+  final AudioProcessingService audioProcessingService = AudioProcessingService();
   final GeminiService _geminiService = GeminiService();
   final DeviceInfoService _deviceInfo = DeviceInfoService();
+  
   String _transcription = "Press the mic to start speaking.";
   String _baseTranscription = "";
   String _fineTunedTranscription = "";
@@ -141,20 +141,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   @override
   void initState() {
+  
     super.initState();
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
     _setupVoiceButtonAnimation();
     _setupTimerAnimation();
-    _initializeLocation();
     _initializeWakeWordDetection();
     _initializeTts();
-
-    // Set up location updates
     _setupLocationUpdates();
-    
-    // Set up weather updates
     _setupWeatherUpdates();
 
     // Position voice button in bottom right after layout is complete
@@ -843,7 +839,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       }
 
       setState(() => _transcription = "Processing audio...");
-      await _uploadAudio(file);
+      await audioProcessingService.uploadAudio(file);
     } catch (e) {
       print('Error in _stopAndSendRecording: $e');
       setState(() {
@@ -851,264 +847,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _isProcessing = false;
       });
     }
-  }
-
-  // Update the _uploadAudio method to handle denoising failures
-  Future<void> _uploadAudio(File file) async {
-    try {
-      print('\n=== Starting Audio Upload Process ===');
-      print('File details:');
-      print('- Path: ${file.path}');
-      print('- Exists: ${await file.exists()}');
-      print('- Size: ${await file.length()} bytes');
-
-      // Step 1: Denoising
-      print('\n=== Step 1: Audio Denoising ===');
-      List<int>? audioData = await _denoiseAudio(file);
-
-      if (audioData == null) {
-        print('Denoising failed, using original audio');
-        audioData = await file.readAsBytes();
-      }
-
-      // Step 2: Transcription
-      print('\n=== Step 2: Transcription ===');
-      await _transcribeAudio(audioData);
-    } catch (e, stackTrace) {
-      print('Error in audio processing:');
-      print('Error: $e');
-      print('Stack trace:\n$stackTrace');
-      setState(() {
-        _transcription = "Error: Failed to process audio";
-        _isProcessing = false;
-      });
-    }
-  }
-
-  Future<List<int>?> _denoiseAudio(File file) async {
-    int retryCount = 0;
-    const maxRetries = 3;
-    const retryDelay = Duration(seconds: 1);
-
-    while (retryCount < maxRetries) {
-      try {
-        print('\n=== Starting Denoising (Attempt ${retryCount + 1}) ===');
-        print('Input file details:');
-        print('- Path: ${file.path}');
-        final fileSize = await file.length();
-        print('- Size: $fileSize bytes');
-
-        if (fileSize == 0) {
-          throw Exception('Audio file is empty');
-        }
-
-        // Validate WAV file header
-        final bytes = await file.readAsBytes();
-        if (bytes.length < 44) {
-          throw Exception('Invalid WAV file: too small');
-        }
-
-        final request = http.MultipartRequest('POST', Uri.parse(DENOISE_URL));
-        // Second addition with same 'file' name
-        final audioFile = await http.MultipartFile.fromPath(
-          'file',
-          file.path,
-          contentType: MediaType('application', 'octet-stream'),
-        );
-        request.files.add(audioFile);
-
-        // Add error tracking headers
-        request.headers.addAll({
-          'X-Retry-Count': retryCount.toString(),
-          'X-Client-Version': '1.0.0',
-          'X-File-Size': fileSize.toString(),
-        });
-
-        print('Sending to denoising API...');
-        print('- File size: ${audioFile.length} bytes');
-        print('- Content type: ${audioFile.contentType}');
-        print('- Retry count: $retryCount');
-
-        final response = await request.send().timeout(
-              const Duration(seconds: 30),
-              onTimeout: () =>
-                  throw TimeoutException('Denoising request timed out'),
-            );
-
-        if (response.statusCode == 200) {
-          final denoisedAudio = await response.stream.toBytes();
-          print('Denoised audio received: ${denoisedAudio.length} bytes');
-
-          if (denoisedAudio.isEmpty) {
-            throw Exception('Received empty audio data');
-          }
-
-          return denoisedAudio;
-        } else {
-          final error = await response.stream.bytesToString();
-          throw Exception('Denoising failed (${response.statusCode}): $error');
-        }
-      } catch (e) {
-        print('Error in denoising (Attempt ${retryCount + 1}): $e');
-
-        if (retryCount < maxRetries - 1) {
-          print('Retrying in ${retryDelay.inSeconds} seconds...');
-          await Future.delayed(retryDelay);
-          retryCount++;
-        } else {
-          // If all retries failed, try to proceed without denoising
-          print(
-              'All denoising attempts failed. Proceeding with original audio...');
-          return await file.readAsBytes();
-        }
-      }
-    }
-
-    // If we reach here, all retries failed
-    return null;
-  }
-
-  Future<void> _transcribeAudio(List<int> audioData) async {
-    setState(() {
-      _isProcessing = true;
-      _transcription = "Processing audio...";
-    });
-
-    try {
-      print('Preparing transcription request...');
-      final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
-
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          audioData,
-          filename: 'denoised_audio.wav',
-          contentType: MediaType('audio', 'wav'),
-        ),
-      );
-
-      request.fields['country'] = _country;
-      print('Sending to transcription API...');
-      print('- Audio size: ${audioData.length} bytes');
-      print('- Country: $_country');
-
-      final response = await request.send();
-      final responseData = await http.Response.fromStream(response);
-
-      print('Transcription response received:');
-      print('- Status code: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final jsonResponse = json.decode(responseData.body);
-        print('Transcription successful:');
-        print('- Base model: ${jsonResponse['base_model']['text']}');
-        print(
-            '- Fine-tuned model: ${jsonResponse['fine_tuned_model']?['text']}');
-
-        // Get transcriptions
-        final baseText = jsonResponse['base_model']['text'];
-        final fineTunedText = jsonResponse['fine_tuned_model']?['text'] ??
-            "No fine-tuned model available for $_country";
-
-        // Get real-time device context
-        Map<String, dynamic> deviceContext =
-            await _deviceInfo.getDeviceContext();
-        print(deviceContext);
-
-        // Create Gemini prompt with dynamic device info
-        final prompt = '''
-        Transcript A (General Model): $baseText  
-        Transcript B (Local Model): $fineTunedText  
-
-        You are a smart, friendly voice assistant in a ride-hailing app. 
-        The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-        ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
-
-        Step 1:  
-        Briefly review both transcripts. If either contains relevant info about the driver's situation (e.g., plans, concerns, questions), use it.  
-        If the transcripts are unclear, irrelevant, or not related to driving, ignore them. Prioritize Transcript B if needed.
-
-        Step 2:  
-        Generate realistic driver and city data based on typical patterns and time of day:
-        - Total rides completed today (e.g., 3–10)
-        - Total earnings today (e.g., RM40–RM200)
-        - 3 nearby areas with random demand levels: High / Medium / Low
-        - Optional surge zone (1 area only, with 1.2x–1.8x multiplier)
-
-        Use the real-time device context:
-        - Location: ${_country}  
-        - Battery: ${deviceContext['battery']}  
-        - Network: ${deviceContext['network']}  
-        - Time: ${deviceContext['time']}  
-        - Weather: ${deviceContext['weather']}  
-
-        You are a smart, friendly voice assistant in a ride-hailing app. 
-        The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-        ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
-
-        ${_hasActiveRequest ? """
-        Current ride request details:
-        - Pickup: $_pickupLocation ($_pickupDetail)
-        - Destination: $_destination
-        - Payment method: $_paymentMethod
-        - Fare amount: $_fareAmount
-        - Trip distance: $_tripDistance
-        - Estimated pickup time: $_estimatedPickupTime
-        - Estimated trip duration: $_estimatedTripDuration
-        """ : ""}
-        Step 3:  
-        Create a short, natural-sounding assistant message using 2–4 of the most relevant details. You may include:
-        - Suggestions on where to go next
-        - Earnings or ride count updates
-        - Surge opportunities
-        - Battery or break reminders
-        - Weather or traffic tips
-        - Motivation
-
-        Message Rules:
-        - Only output step 3.
-        - Speak naturally, as if voiced in-app
-        - Don't repeat the same fact in different ways
-        - Only include useful, moment-relevant info
-        - Keep it under 3 sentences
-
-        Final Output:  
-        One friendly and helpful message that feels human and situation-aware.
-
-
-            ''';
-
-        print(prompt);
-        print('\nWaiting for Gemini response...');
-
-        final geminiResponse =
-            await _geminiService.generateOneTimeResponse(prompt);
-
-        print('\nGemini Response:');
-        print('----------------------------------------');
-        print(geminiResponse);
-
-        setState(() {
-          _baseTranscription = baseText;
-          _fineTunedTranscription = fineTunedText;
-          _geminiResponse = geminiResponse;
-          _geminiStreamController.add(geminiResponse);
-          _isProcessing = false; // Important to set this to false!
-        });
-
-        _speakResponse(geminiResponse);
-      } else {
-        throw Exception(
-            'Transcription failed: ${responseData.statusCode}\n${responseData.body}');
-      }
-    } catch (e) {
-      print('\n❌ Error in Gemini processing:');
-      print(e);
-      rethrow;
-    }
-    setState(() {
-      _isSpeaking = false;
-    });
   }
 
   Future<void> _handleLocationPermission() async {
@@ -2422,152 +2160,108 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
 // Extract the modal into a separate method
-  Widget _buildVoiceModal(BuildContext context) {
-    // Get theme provider to check dark mode status
-    final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
-    
-    return StatefulBuilder(
-      builder: (BuildContext context, StateSetter modalSetState) {
-        // This function will refresh the modal with current state
-        void updateModalState() {
-          modalSetState(() {});
-        }
+Widget _buildVoiceModal(BuildContext context) {
+  // Get theme provider to check dark mode status
+  final isDarkMode = Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+  
+  return StatefulBuilder(
+    builder: (BuildContext context, StateSetter modalSetState) {
+      // This function will refresh the modal with current state
+      void updateModalState() {
+        modalSetState(() {});
+      }
 
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          Future.delayed(Duration(milliseconds: 500), () {
-            if (context.mounted) updateModalState();
-          });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future.delayed(Duration(milliseconds: 500), () {
+          if (context.mounted) updateModalState();
         });
+      });
 
-        return StreamBuilder<String>(
-          stream: _geminiStreamController.stream,
-          initialData: _geminiResponse,
-          builder: (context, snapshot) {
-            return Container(
-              width: double.infinity,
-              height: 300,
-              decoration: BoxDecoration(
-                color: isDarkMode ? const Color(0xFF252525) : Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
-                ),
+      return StreamBuilder<String>(
+        stream: _geminiStreamController.stream,
+        initialData: _geminiResponse,
+        builder: (context, snapshot) {
+          return Container(
+            width: double.infinity,
+            height: 300,
+            decoration: BoxDecoration(
+              color: isDarkMode ? const Color(0xFF252525) : Colors.white,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (_isRecording)
-                    Column(
-                      children: [
-                        const Icon(
-                          Icons.mic,
-                          color: AppTheme.grabGreen,
-                          size: 48,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _transcription,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
-                            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-                          ),
-                        ),
-                      ],
-                    )
-                  else if (_isProcessing)
-                    Column(
-                      children: [
-                        const CircularProgressIndicator(
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          "Processing...",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
-                            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-                          ),
-                        ),
-                      ],
-                    )
-                  else if (snapshot.hasData && snapshot.data!.isNotEmpty)
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(23),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (_baseTranscription.isNotEmpty) ...[
-                              Text(
-                                "Your speech:",
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700,
-                                ),
-                              ),
-                              Text(
-                                _baseTranscription,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700,
-                                  fontStyle: FontStyle.italic,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                            ],
-                            if (_fineTunedTranscription.isNotEmpty &&
-                                _fineTunedTranscription !=
-                                    _baseTranscription) ...[
-                              Text(
-                                "Enhanced recognition:",
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade700,
-                                ),
-                              ),
-                              Text(
-                                _fineTunedTranscription,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: AppTheme.grabGreen,
-                                  fontStyle: FontStyle.italic,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                            ],
-                            Text(
-                              snapshot.data!,
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-                                height: 1.5,
-                              ),
-                            ),
-                          ],
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_isRecording)
+                  Column(
+                    children: [
+                      const Icon(
+                        Icons.mic,
+                        color: AppTheme.grabGreen,
+                        size: 48,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _transcription,
+                        style: TextStyle(
+                          color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                         ),
                       ),
-                    )
-                  else
-                    Text(
-                      "No data available",
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+                    ],
+                  )
+                else if (_isProcessing)
+                  Column(
+                    children: [
+                      const CircularProgressIndicator(
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        "Processing...",
+                        style: TextStyle(
+                          color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                  )
+                else if (snapshot.hasData && snapshot.data!.isNotEmpty)
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(23),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Add this Text widget to display the Gemini response
+                          Text(
+                            snapshot.data!,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: isDarkMode ? Colors.white : Colors.black87,
+                              height: 1.5,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
+                  )
+                else
+                  Text(
+                    "No data available",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      );
+    },
+  );
+}
   // Set up voice command handler
   void _setupVoiceCommandHandler() {
     _voiceProvider.setCommandCallback((command) {
