@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/icon.png" alt="Talk To Task Logo" width="180"/>
+  <img src="assets/icon2.png" alt="Talk To Task Logo" width="180"/>
   <p>Speak, navigate, and ride—your AI-powered voice assistant, designed for diverse Southeast Asian accents of Grab drivers" is a strong tagline.</p>
 
   <img src="https://img.shields.io/badge/Flutter-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter"/>
