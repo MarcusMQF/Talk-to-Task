@@ -5,12 +5,14 @@ class AnimatedWeatherIndicator extends StatefulWidget {
   final String weatherEmoji;
   final String weatherCondition;
   final bool isDarkMode;
+  final Color? backgroundColor;
   
   const AnimatedWeatherIndicator({
     Key? key,
     required this.weatherEmoji,
     required this.weatherCondition,
     this.isDarkMode = false,
+    this.backgroundColor,
   }) : super(key: key);
 
   @override
@@ -171,21 +173,8 @@ class _AnimatedWeatherIndicatorState extends State<AnimatedWeatherIndicator> wit
             );
         }
         
-        return Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: widget.isDarkMode ? const Color(0xFF252525) : Colors.white.withOpacity(0.8),
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 4,
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-          child: emojiWidget,
-        );
+        // Use the parent container styling instead of adding our own
+        return Center(child: emojiWidget);
       },
     );
   }

@@ -139,10 +139,21 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _navigationSteps = [];
   Timer? _navigationUpdateTimer;
 
+  // Compass button visibility state
+  bool _showCompassButton = false;
+  double _mapBearing = 0.0;
+  
+  // Add state variable to track map loading
+  bool _isMapLoading = true;
+
   @override
   void initState() {
   
     super.initState();
+    
+    // Move _initializeLocation call earlier in the initialization process
+    _initializeLocation();
+    
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
@@ -667,8 +678,95 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _initializeLocation() async {
-    await _getCurrentLocation();
-    _updateDistanceInformation();
+    // Check location permissions and settings
+    bool serviceEnabled;
+    PermissionStatus permissionGranted;
+
+    // Ensure location service is enabled
+    serviceEnabled = await _location.serviceEnabled();
+    if (!serviceEnabled) {
+      serviceEnabled = await _location.requestService();
+      if (!serviceEnabled) {
+        setState(() {
+          _isMapLoading = false; // Stop loading indicator if service is disabled
+        });
+        return;
+      }
+    }
+
+    // Request location permission if needed
+    permissionGranted = await _location.hasPermission();
+    if (permissionGranted == PermissionStatus.denied) {
+      permissionGranted = await _location.requestPermission();
+      if (permissionGranted != PermissionStatus.granted) {
+        setState(() {
+          _isMapLoading = false; // Stop loading indicator if permission is denied
+        });
+        return;
+      }
+    }
+
+    // Configure location for better accuracy
+    await _location.changeSettings(
+      accuracy: LocationAccuracy.high,
+      interval: 5000, // Update every 5 seconds
+      distanceFilter: 3, // Update when moved 3 meters
+    );
+
+    try {
+      // Get initial location immediately
+      final locationData = await _location.getLocation();
+      
+      setState(() {
+        _currentPosition = locationData;
+        
+        // Update driver marker as soon as we have a location
+        if (_currentPosition != null) {
+          _updateDriverLocationMarker();
+        }
+      });
+
+      // Try to get the country name
+      if (_currentPosition != null) {
+        try {
+          final placemarks = await geocoding.placemarkFromCoordinates(
+            _currentPosition!.latitude!,
+            _currentPosition!.longitude!,
+          );
+
+          if (placemarks.isNotEmpty) {
+            setState(() {
+              final rawCountry = placemarks.first.country ?? "Unknown";
+              
+              final countryMapping = {
+                'Malaysia': 'Malaysia',
+                'Singapore': 'Singapore',
+                'Thailand': 'Thailand',
+                'Indonesia': 'Indonesia',
+              };
+              
+              _country = countryMapping[rawCountry] ?? rawCountry;
+              print('Country detected: $_country');
+            });
+          }
+        } catch (e) {
+          print('Error getting country: $e');
+        }
+      }
+      
+      // Also update distance information
+      _updateDistanceInformation();
+      
+      // Stop loading indicator
+      setState(() {
+        _isMapLoading = false;
+      });
+    } catch (e) {
+      print('Error getting initial location: $e');
+      setState(() {
+        _isMapLoading = false;
+      });
+    }
   }
 
   Future<String> _getTempFilePath() async {
@@ -902,6 +1000,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
+  // ignore: unused_element
   Future<void> _getCurrentLocation() async {
     await _handleLocationPermission();
 
@@ -1885,38 +1984,59 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
     
     return Positioned(
-      left: 20,
+      left: 21,
       top: 140,
-      child: _isLoadingWeather
-          ? Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: isDarkMode ? const Color(0xFF252525) : Colors.white.withOpacity(0.8),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 4,
-                    spreadRadius: 1,
+      child: Container(
+        width: 40, // Fixed width for consistency
+        height: 40, // Fixed height for consistency
+        decoration: BoxDecoration(
+          color: Colors.blue, // Blue background regardless of theme
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 4,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            // Loading indicator with animated opacity
+            AnimatedOpacity(
+              opacity: _isLoadingWeather ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              child: const Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                   ),
-                ],
-              ),
-              child: SizedBox(
-                width: 15,
-                height: 15,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(isDarkMode ? Colors.white70 : Colors.grey),
                 ),
               ),
-            )
-          : _weatherData == null
-              ? const SizedBox.shrink()
-              : AnimatedWeatherIndicator(
-                  weatherEmoji: _weatherData!['emoji'],
-                  weatherCondition: _weatherData!['main'],
-                  isDarkMode: isDarkMode,
-                ),
+            ),
+            
+            // Weather display with animated opacity
+            AnimatedOpacity(
+              opacity: (!_isLoadingWeather && _weatherData != null) ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              child: _weatherData == null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.all(2.0),
+                      child: AnimatedWeatherIndicator(
+                        weatherEmoji: _weatherData!['emoji'],
+                        weatherCondition: _weatherData!['main'],
+                        isDarkMode: isDarkMode,
+                        backgroundColor: Colors.blue,
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1942,6 +2062,25 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   
                   // Apply theme-based map style
                   controller.setMapStyle(themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
+                  
+                  // If we already have location by this point, center map on it
+                  if (_currentPosition != null) {
+                    _centerMapOnDriverPosition();
+                  }
+                },
+                onCameraMove: (CameraPosition position) {
+                  // Show compass button when map is rotated
+                  if (position.bearing != 0) {
+                    setState(() {
+                      _showCompassButton = true;
+                      _mapBearing = position.bearing;
+                    });
+                  } else {
+                    setState(() {
+                      _showCompassButton = false;
+                      _mapBearing = 0.0;
+                    });
+                  }
                 },
                 markers: _markers,
                 polylines: _polylines,
@@ -1949,46 +2088,40 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 myLocationButtonEnabled: false,
                 zoomControlsEnabled: false,
                 mapToolbarEnabled: false,
-                compassEnabled: true,
+                compassEnabled: false, // Disable default compass button
               ),
-              _buildOnlineToggle(),
-              // Weather indicator
-              _buildWeatherIndicator(),
-              // Country flag indicator - hide during navigation mode
-              if (!_isNavigationMode)
-                Positioned(
-                  top: 55,
-                  left: 20,
-                  child: GestureDetector(
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Location: $_country')),
-                      );
-                    },
-                    child: Container(
-                      width: 39,
-                      height: 39,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        color: themeProvider.isDarkMode ? const Color(0xFF2A2A2A) : Colors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: Image.asset(
-                          _getCountryFlagAsset(),
-                          fit: BoxFit.cover,
+              
+              // Map loading indicator - shown until location is ready
+              if (_isMapLoading)
+                Container(
+                  color: themeProvider.isDarkMode 
+                      ? Colors.black.withOpacity(0.6)
+                      : Colors.white.withOpacity(0.6),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
                         ),
-                      ),
+                        const SizedBox(height: 16),
+                        Text(
+                          "Getting your location...",
+                          style: TextStyle(
+                            color: themeProvider.isDarkMode ? Colors.white : Colors.black87,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
+              
+              // Rest of UI components
+              _buildOnlineToggle(),
+              _buildWeatherIndicator(),
+              _buildCompassButton(),
+              _buildCountryIndicator(),
               if (_isOnline && !_isNavigationMode) _buildRequestCard(),
               if (_isNavigationMode) _buildNavigationInterface(),
               _buildMapControls(),
@@ -2449,6 +2582,15 @@ Widget _buildVoiceModal(BuildContext context) {
           _currentPosition = currentLocation;
         });
         
+        // Always update driver marker on position changes
+        _updateDriverLocationMarker();
+        
+        // If map hasn't been initialized yet, center on driver
+        if (_mapController != null && !_mapInitialized && _currentPosition != null) {
+          _centerMapOnDriverPosition();
+          _mapInitialized = true;
+        }
+        
         // Check if location has changed significantly (more than 500 meters)
         // or if it's the first update
         final currentLat = currentLocation.latitude!;
@@ -2465,32 +2607,27 @@ Widget _buildVoiceModal(BuildContext context) {
           _fetchWeatherData();
         }
 
-        // Update driver marker on the map if in navigation mode
-        if (_isNavigationMode && _mapController != null) {
-          _updateDriverLocationMarker();
+        // Calculate distance to pickup if navigating to pickup
+        if (_isNavigatingToPickup && _pickupLocationMarker != null) {
+          // Calculate distance between driver and pickup point
+          final driverLat = _currentPosition!.latitude!;
+          final driverLng = _currentPosition!.longitude!;
+          final pickupLat = _pickupLocationMarker!.position.latitude;
+          final pickupLng = _pickupLocationMarker!.position.longitude;
 
-          // Calculate distance to pickup if navigating to pickup
-          if (_isNavigatingToPickup && _pickupLocationMarker != null) {
-            // Calculate distance between driver and pickup point
-            final driverLat = _currentPosition!.latitude!;
-            final driverLng = _currentPosition!.longitude!;
-            final pickupLat = _pickupLocationMarker!.position.latitude;
-            final pickupLng = _pickupLocationMarker!.position.longitude;
+          // Simple distance calculation (not taking into account roads)
+          final distance =
+              calculateDistance(driverLat, driverLng, pickupLat, pickupLng);
 
-            // Simple distance calculation (not taking into account roads)
-            final distance =
-                calculateDistance(driverLat, driverLng, pickupLat, pickupLng);
+          setState(() {
+            _driverToPickupDistance = "${distance.toStringAsFixed(1)} km";
 
-            setState(() {
-              _driverToPickupDistance = "${distance.toStringAsFixed(1)} km";
-
-              // If driver is very close to pickup point, show pickup confirmation
-              if (distance < 0.1 && !_hasPickedUpPassenger) {
-                // Within 100 meters
-                _showPickupConfirmation();
-              }
-            });
-          }
+            // If driver is very close to pickup point, show pickup confirmation
+            if (distance < 0.1 && !_hasPickedUpPassenger) {
+              // Within 100 meters
+              _showPickupConfirmation();
+            }
+          });
         }
       }
     });
@@ -3223,32 +3360,8 @@ Widget _buildVoiceModal(BuildContext context) {
 
     return Column(
       children: [
-        // Show loading indicator when fetching route
-        if (_isDirectionsLoading)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            color: Colors.black.withOpacity(0.7),
-            child: const Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      )),
-                  SizedBox(width: 12),
-                  Text(
-                    "Loading route...",
-                    style: TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        // Remove the redundant loading indicator when fetching route
+        
         // Top navigation bar
         Container(
           color: Colors.black.withOpacity(0.8),
@@ -3797,5 +3910,160 @@ Widget _buildVoiceModal(BuildContext context) {
   void _updateMapStyleBasedOnTheme() {
     final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
     _mapController?.setMapStyle(themeProvider.isDarkMode ? MapStyles.dark : MapStyles.light);
+  }
+
+  // Update the method for getting device context
+  Future<Map<String, dynamic>> _getDeviceContextWithWeather() async {
+    // Get basic device context
+    Map<String, dynamic> deviceContext = await _deviceInfo.getDeviceContext();
+    
+    // Override weather with our local _weatherData if it's available
+    if (_weatherData != null) {
+      final weatherText = "${_weatherData!['main']}, ${_weatherData!['temperature'].toStringAsFixed(1)}°C ${_weatherData!['emoji']}";
+      deviceContext['weather'] = weatherText;
+      print('Using local weather data for Gemini: $weatherText');
+    } else {
+      print('No local weather data available for Gemini, using DeviceInfo weather');
+    }
+    
+    return deviceContext;
+  }
+
+  // Build custom compass button that appears when map is rotated
+  Widget _buildCompassButton() {
+    final isDark = Provider.of<ThemeProvider>(context).isDarkMode;
+    
+    if (!_showCompassButton) {
+      return const SizedBox.shrink();
+    }
+    
+    // Position below AI chat button during navigation mode or when navigating to pickup
+    final double topPosition = (_isNavigationMode || _isNavigatingToPickup) ? 360 : 85;
+    
+    return Positioned(
+      right: 16,
+      top: topPosition, // Position based on navigation state
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.grabBlack : Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: _resetMapBearing,
+            child: Center(
+              child: Transform.rotate(
+                angle: _mapBearing * (3.14159265359 / 180), // Convert degrees to radians
+                child: const Icon(
+                  Icons.explore,
+                  color: AppTheme.grabGreen,
+                  size: 24,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  // Reset map bearing to north (0 degrees)
+  Future<void> _resetMapBearing() async {
+    if (_mapController != null) {
+      // Convert LocationData to LatLng or use initial position
+      final LatLng targetPosition = _currentPosition != null 
+          ? LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!) 
+          : _initialPosition;
+      
+      final double currentZoom = await _mapController!.getZoomLevel();
+      
+      _mapController!.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: targetPosition,
+          zoom: currentZoom,
+          bearing: 0.0,
+        ),
+      ));
+      
+      // Hide compass after resetting
+      setState(() {
+        _showCompassButton = false;
+        _mapBearing = 0.0;
+      });
+    }
+  }
+
+  // Build country flag indicator positioned on the left side
+  Widget _buildCountryIndicator() {
+    final isDarkMode = Provider.of<ThemeProvider>(context).isDarkMode;
+    
+    if (_isNavigationMode) {
+      return const SizedBox.shrink();
+    }
+    
+    return Positioned(
+      top: 55,
+      left: 20,
+      child: GestureDetector(
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Location: $_country')),
+          );
+        },
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: isDarkMode ? const Color(0xFF2A2A2A) : Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 4,
+                spreadRadius: 1,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Image.asset(
+              _getCountryFlagAsset(),
+              fit: BoxFit.cover,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // New method to centralize the map focusing logic
+  void _centerMapOnDriverPosition() {
+    if (_mapController == null || _currentPosition == null) return;
+    
+    final driverPosition = LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+    
+    // Use newCameraPosition instead of just newLatLng to keep consistent zoom level
+    _mapController!.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: driverPosition,
+          zoom: 16.0, // Better initial zoom level
+          bearing: 0.0,
+          tilt: 0.0,
+        ),
+      ),
+    );
   }
 }
