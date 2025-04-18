@@ -88,8 +88,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Voice Recognition Module
   // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-  static const String SERVER_URL = 'http://10.167.66.116:8000/transcribe/';
-  static const String DENOISE_URL = 'http://10.167.66.116:8000/denoise/';
+  static const String SERVER_URL = 'http://10.167.65.61:8000/transcribe/';
+  static const String DENOISE_URL = 'http://10.167.65.61:8000/denoise/';
 
   final AudioRecorder _recorder = AudioRecorder();
   final GeminiService _geminiService = GeminiService();
@@ -1017,66 +1017,74 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
         // Create Gemini prompt with dynamic device info
         final prompt = '''
-        Transcript A (General Model): $baseText  
-        Transcript B (Local Model): $fineTunedText  
+        You are a helpful and friendly voice assistant for Grab drivers in Malaysia. Your goal is to provide concise, relevant, and timely information to help drivers complete their tasks safely and efficiently.
 
-        You are a smart, friendly voice assistant in a ride-hailing app. 
-        The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-        ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
+        Here's the current context:
 
-        Step 1:  
-        Briefly review both transcripts. If either contains relevant info about the driver's situation (e.g., plans, concerns, questions), use it.  
-        If the transcripts are unclear, irrelevant, or not related to driving, ignore them. Prioritize Transcript B if needed.
-
-        Step 2:  
-        Generate realistic driver and city data based on typical patterns and time of day:
-        - Total rides completed today (e.g., 3–10)
-        - Total earnings today (e.g., RM40–RM200)
-        - 3 nearby areas with random demand levels: High / Medium / Low
-        - Optional surge zone (1 area only, with 1.2x–1.8x multiplier)
-
-        Use the real-time device context:
-        - Location: ${_country}  
-        - Battery: ${deviceContext['battery']}  
-        - Network: ${deviceContext['network']}  
-        - Time: ${deviceContext['time']}  
-        - Weather: ${deviceContext['weather']}  
-
-        You are a smart, friendly voice assistant in a ride-hailing app. 
-        The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-        ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
+        * **Driver Status:** The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
+        * **Active Request:** ${_hasActiveRequest ? "The driver HAS an active ride request." : "The driver has NO active ride request."}
+        * **Location:** 
+            * Country: ${_country}
+            * Coordinates: ${_currentPosition != null ? "${_currentPosition!.latitude}, ${_currentPosition!.longitude}" : "Unknown"}
+        * **Device:**
+            * Battery Level: ${deviceContext['battery']}
+            * Network Connectivity: ${deviceContext['network']}
+            * Time: ${deviceContext['time']}
+            * Weather: ${deviceContext['weather']}
 
         ${_hasActiveRequest ? """
-        Current ride request details:
-        - Pickup: $_pickupLocation ($_pickupDetail)
-        - Destination: $_destination
-        - Payment method: $_paymentMethod
-        - Fare amount: $_fareAmount
-        - Trip distance: $_tripDistance
-        - Estimated pickup time: $_estimatedPickupTime
-        - Estimated trip duration: $_estimatedTripDuration
+        Here are the details of the current ride request:
+
+        * Pickup Location: $_pickupLocation ($_pickupDetail)
+        * Destination: $_destination
+        * Payment Method: $_paymentMethod
+        * Fare Amount: $_fareAmount
+        * Trip Distance: $_tripDistance
+        * Estimated Pickup Time: $_estimatedPickupTime
+        * Estimated Trip Duration: $_estimatedTripDuration
         """ : ""}
-        Step 3:  
-        Create a short, natural-sounding assistant message using 2–4 of the most relevant details. You may include:
-        - Suggestions on where to go next
-        - Earnings or ride count updates
-        - Surge opportunities
-        - Battery or break reminders
-        - Weather or traffic tips
-        - Motivation
 
-        Message Rules:
-        - Only output step 3.
-        - Speak naturally, as if voiced in-app
-        - Don't repeat the same fact in different ways
-        - Only include useful, moment-relevant info
-        - Keep it under 3 sentences
+        Recent Driver Activity:
 
-        Final Output:  
-        One friendly and helpful message that feels human and situation-aware.
+        * Transcript A (General Model): $baseText
+        * Transcript B (Fine-Tuned Model): $fineTunedText
 
+        Instructions:
 
-            ''';
+        1.  Analyze the driver's status, location, device information, and any active ride request details.
+        2.  Review the recent driver activity from Transcript A and Transcript B. Prioritize Transcript B (the fine-tuned model) for accuracy and relevance to the Malaysian context.
+        3.  Generate a short, natural-sounding response (no more than two sentences) that DIRECTLY ANSWERS THE QUESTION OR REQUEST in Transcript B, unless there is critical ride information that must be communicated first.
+        4.  All response should be in English language.
+        5.  If you could not understand the Transcript B, then prioritize the Transcript A. If dont understand both, ask driver to rephrase.
+        6.  Compare which Transcript is more accurate and possible and reply on that,
+
+        Response Guidelines:
+
+        * FIRST PRIORITY: If Transcript B contains a clear question or request, respond to it directly.
+        * SECOND PRIORITY: If there is an active ride request, provide essential navigation information.
+        * If online with no active request: Suggest areas with high demand or surge pricing.
+        * If offline: Provide helpful information.
+        * Include only the most critical details. Avoid overwhelming the driver.
+        * Use a friendly and professional tone, appropriate for a driving context.
+        * Consider the time of day and weather conditions to offer relevant tips.
+        * If the transcripts are unclear or irrelevant, provide general, helpful information.
+        * When asked about high-demand areas, use the exact coordinates provided in the Location section to give precise, location-specific answers, but no need to mention the coordinates.
+
+        Relevant high-demand locations in Kuala Lumpur:
+        * KLCC/Bukit Bintang area (3.1478° N, 101.7155° E): High demand from tourists and business travelers, especially evenings and weekends.
+        * KL Sentral (3.1344° N, 101.6866° E): Transportation hub with high demand during morning/evening rush hours.
+        * Bangsar/Mid Valley (3.1182° N, 101.6765° E): Popular shopping and dining areas with peak demand on weekends.
+        * Damansara Heights (3.1508° N, 101.6551° E): Business district with high demand during weekday mornings/evenings.
+        * Petaling Jaya/Sunway (3.0733° N, 101.6073° E): Busy area with high demand near Sunway Pyramid mall.
+        * Mont Kiara (3.1711° N, 101.6492° E): Expat area with consistent demand, especially mornings and evenings.
+
+        Examples:
+        1. If Transcript B shows "Di manakah kawasan permintaan tertinggi sekarang?" (Where is the area with highest demand now?), respond with information about high demand areas near the driver's current coordinates, even if there's an active ride. If coordinates are unknown, ask the driver to share their location.
+        2. If Transcript B shows a navigation question but there's an active ride, prioritize the active ride details unless the question is specifically about a different location.
+
+        Output:
+        A brief, natural-sounding response for the Grab driver.
+        ''';
 
         print(prompt);
         print('\nWaiting for Gemini response...');
