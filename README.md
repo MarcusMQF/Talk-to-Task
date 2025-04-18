@@ -1,6 +1,5 @@
 <div align="center">
-  <img src="assets/talk_to_task.png" alt="Talk To Task Logo" width="180"/>
-  <h1>Talk To Task</h1>
+  <img src="assets/icon.png" alt="Talk To Task Logo" width="180"/>
   <p>Speak, navigate, and ride—your AI-powered voice assistant, designed for diverse Southeast Asian accents of Grab drivers" is a strong tagline.</p>
 
   <img src="https://img.shields.io/badge/Flutter-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter"/>
@@ -13,7 +12,7 @@
 
 ## 📱 About
 
-**Talk To Task** is a cutting-edge Flutter application designed to **revolutionize the ride-hailing driver experience in Malaysia** through advanced voice recognition and AI assistance. Built for the emerging hands-free driving paradigm, it delivers a **complete voice-controlled interface for Grab drivers**, allowing them to manage ride requests, navigate to destinations, and interact with passengers while keeping their eyes on the road and hands on the wheel. Leveraging **Google's Gemini AI for contextual understanding, custom-trained Whisper models for accent-aware recognition, and Google Maps Platform for intelligent navigation**, Talk To Task addresses the critical safety and efficiency challenges faced by ride-hailing drivers in busy urban environments.
+**Talk To Task** is a cutting-edge Flutter application designed to **revolutionize the ride-hailing driver experience not only in Malaysia,  but also in other countries where Grab operates, such as Singapore and Thailand** through advanced voice recognition and AI assistance. Built for the emerging hands-free driving paradigm, it delivers a **complete voice-controlled interface for Grab drivers**, allowing them to manage ride requests, navigate to destinations, and interact with passengers while keeping their eyes on the road and hands on the wheel. Leveraging **Google's Gemini AI for contextual understanding, custom-trained Whisper models for accent-aware recognition, and Google Maps Platform for intelligent navigation**, Talk To Task addresses the critical safety and efficiency challenges faced by ride-hailing drivers in busy urban environments.
 
 - **Key Features:** Hands-free ride management, wake-word activation, noise-cancelling voice processing, intelligent navigation, dark mode support
 - **Tech Stack:** Flutter, Dart, Google Maps, Gemini AI, Whisper AI, FastAPI
@@ -164,10 +163,7 @@ Our adaptive theme system not only enhances visual comfort but contributes to dr
 
 ## 🔮 Future Roadmap
 
-- **Passenger Voice Interaction** - Allow passengers to make simple requests through the driver's app
 - **Predictive Intelligence** - Anticipate driver needs based on time, location, and historical patterns
-- **Expanded Language Support** - Add Malay, Mandarin, and Tamil voice recognition for Malaysia's diverse population
-- **AR Navigation Overlay** - Augmented reality navigation cues for enhanced driver orientation
 - **Driver Wellness Monitoring** - Detect fatigue or distraction through voice pattern analysis
 
 ## 🏆 Impact
@@ -178,6 +174,5 @@ Talk To Task addresses critical safety and efficiency challenges in the ride-hai
 - **⏱️ Increased Efficiency**: Speeds up ride acceptance and navigation processes by 42% in real-world testing
 - **💰 Economic Benefits**: Enables drivers to complete more rides per shift through streamlined operations
 - **♿ Accessibility**: Creates opportunities for drivers with certain physical limitations
-- **🌍 Sustainability**: Optimizes routes and reduces congestion, contributing to lower carbon emissions
 
 Built with meticulous attention to real driver needs and leveraging cutting-edge AI technology, Talk To Task represents the future of voice-driven mobility solutions for the emerging smart city ecosystem.
