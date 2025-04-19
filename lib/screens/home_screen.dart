@@ -6,6 +6,7 @@ import '../widgets/voice_button.dart';
 import '../widgets/voice_feedback.dart';
 import '../constants/app_theme.dart';
 import 'ride_screen.dart';
+import '../services/audio_processing_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,6 +18,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _isOnline = true;
   late VoiceAssistantProvider _voiceProvider; // Store a reference to the provider
+  final AudioProcessingService _audioProcessingService = AudioProcessingService();
   
   @override
   void initState() {
@@ -24,6 +26,12 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // Store reference to provider
     _voiceProvider = Provider.of<VoiceAssistantProvider>(context, listen: false);
+    
+    // Initialize AudioProcessingService with the current online status
+    _audioProcessingService.updateGeminiPromptContext(
+      isOnline: _isOnline,
+      hasActiveRequest: false,
+    );
     
     // Set up command handler after the first frame is rendered
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -36,6 +44,19 @@ class _HomeScreenState extends State<HomeScreen> {
     // Remove command handler using stored reference
     _voiceProvider.removeCommandCallback();
     super.dispose();
+  }
+  
+  // Helper method to update online status and Gemini context
+  void _updateOnlineStatus(bool isOnline) {
+    setState(() {
+      _isOnline = isOnline;
+      
+      // Update AudioProcessingService's Gemini instance
+      _audioProcessingService.updateGeminiPromptContext(
+        isOnline: _isOnline,
+        hasActiveRequest: false,
+      );
+    });
   }
   
   void _setupVoiceCommandHandler() {
@@ -51,9 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
           });
           break;
         case 'go_offline':
-          setState(() {
-            _isOnline = false;
-          });
+          _updateOnlineStatus(false);
           // Show a snackbar
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -63,9 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
           break;
         case 'go_online':
-          setState(() {
-            _isOnline = true;
-          });
+          _updateOnlineStatus(true);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('You are now online'),
@@ -105,9 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.only(right: 16.0),
             child: ElevatedButton(
               onPressed: () {
-                setState(() {
-                  _isOnline = !_isOnline;
-                });
+                _updateOnlineStatus(!_isOnline);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: _isOnline ? Colors.red : Colors.white,

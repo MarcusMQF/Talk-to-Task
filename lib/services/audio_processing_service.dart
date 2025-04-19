@@ -473,4 +473,35 @@ class AudioProcessingService {
     _amplitudeTimer?.cancel();
     _recorder.dispose();
   }
+
+  // Add this method to update the Gemini prompt context
+  void updateGeminiPromptContext({
+    required bool isOnline,
+    required bool hasActiveRequest,
+    String? pickupLocation,
+    String? pickupDetail,
+    String? destination,
+    String? paymentMethod,
+    String? fareAmount,
+    String? tripDistance,
+    String? driverToPickupDistance,
+    String? pickupToDestinationDistance,
+    String? estimatedPickupTime,
+    String? estimatedTripDuration,
+  }) {
+    _geminiService.updatePromptContext(
+      isOnline: isOnline,
+      hasActiveRequest: hasActiveRequest,
+      pickupLocation: pickupLocation,
+      pickupDetail: pickupDetail,
+      destination: destination,
+      paymentMethod: paymentMethod,
+      fareAmount: fareAmount,
+      tripDistance: tripDistance,
+      driverToPickupDistance: driverToPickupDistance,
+      pickupToDestinationDistance: pickupToDestinationDistance,
+      estimatedPickupTime: estimatedPickupTime,
+      estimatedTripDuration: estimatedTripDuration,
+    );
+  }
 }

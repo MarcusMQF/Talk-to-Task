@@ -71,6 +71,56 @@ class GeminiService {
     }
   }
 
+  /// Helper method to build ride context portion of the prompt
+  String _buildRideContextPrompt() {
+    final buffer = StringBuffer('\nACTIVE RIDE REQUEST DETAILS:\n');
+
+    // Add pickup information
+    if (_rideContext['pickupLocation'] != null) {
+      buffer.write('Pickup: ${_rideContext['pickupLocation']}\n');
+
+      if (_rideContext['pickupDetail'] != null) {
+        buffer.write('   Detail: ${_rideContext['pickupDetail']}\n');
+      }
+    }
+
+    // Add destination information
+    if (_rideContext['destination'] != null) {
+      buffer.write('Destination: ${_rideContext['destination']}\n');
+    }
+
+    // Add distance information - separate driver-to-pickup from pickup-to-destination
+    if (_rideContext['driverToPickupDistance'] != null) {
+      buffer.write('Distance to pickup: ${_rideContext['driverToPickupDistance']}\n');
+    }
+    
+    if (_rideContext['pickupToDestinationDistance'] != null) {
+      buffer.write('Trip distance (pickup to destination): ${_rideContext['pickupToDestinationDistance']}\n');
+    }
+
+    // Add time information - separate pickup ETA from trip duration
+    if (_rideContext['estimatedPickupTime'] != null) {
+      buffer.write('Est. time to pickup: ${_rideContext['estimatedPickupTime']}\n');
+    }
+
+    if (_rideContext['estimatedTripDuration'] != null) {
+      buffer.write('Est. trip duration after pickup: ${_rideContext['estimatedTripDuration']}\n');
+    }
+
+    // Add fare and payment information
+    if (_rideContext['fareAmount'] != null) {
+      buffer.write('Fare: ${_rideContext['fareAmount']}');
+
+      if (_rideContext['paymentMethod'] != null) {
+        buffer.write(' (${_rideContext['paymentMethod']})\n');
+      } else {
+        buffer.write('\n');
+      }
+    }
+
+    return buffer.toString();
+  }
+
   /// MOVED FROM AudioProcessingService: Creates a Gemini prompt with relevant context
   String createGeminiPrompt(String baseText, String fineTunedText,
       Map<String, dynamic> deviceContext, String country) {
@@ -80,15 +130,13 @@ Your goal is to provide concise, relevant, and timely information to help driver
 
         Here's the current context:
  
-    * **Driver Status:** The driver is currently ${_isOnline ? "ONLINE and available for rides" : "OFFLINE and not accepting ride requests"}.
-    * **Active Request:** ${_hasActiveRequest ? "The driver has an active ride request waiting for acceptance." : "The driver has no pending ride requests."}
-    * **Location:**
-    * Location: $country  
-
-    * Battery: ${deviceContext['battery'] ?? 'Unknown'}  
-    * Network: ${deviceContext['network'] ?? 'Unknown'}  
-    * Time: ${deviceContext['time'] ?? 'Unknown'}  
-    * Weather: ${deviceContext['weather'] ?? 'Unknown'}  
+    * **Driver Status:** ${_isOnline ? "ONLINE - Available for ride requests" : "OFFLINE - Not accepting ride requests"}
+    * **Active Order:** ${_hasActiveRequest ? "YES - Driver has a pending ride request" : "NO - No current ride requests"}
+    * **Location:** $country  
+    * **Battery:** ${deviceContext['battery'] ?? 'Unknown'}  
+    * **Network:** ${deviceContext['network'] ?? 'Unknown'}  
+    * **Time:** ${deviceContext['time'] ?? 'Unknown'}  
+    * **Weather:** ${deviceContext['weather'] ?? 'Unknown'}  
     ${_rideContext.isNotEmpty ? _buildRideContextPrompt() : ''}
 
 Recent Driver Activity:
@@ -107,9 +155,10 @@ Recent Driver Activity:
 
         Response Guidelines:
 
-        * FIRST PRIORITY: If Transcript B contains a clear question or request, respond to it directly.
-        * SECOND PRIORITY: If there is an active ride request, provide essential navigation information.
-        * If online with no active request: Suggest areas with high demand or surge pricing.
+        * ONLY mention active ride details if the driver specifically asks about the current ride request, OR if the information is critical.
+        * If there is an active ride request and the driver asks about it, provide relevant navigation information.
+        * If Transcript B contains a clear question or request, respond to it directly.
+        * If online with no active request: Suggest areas with high demand or surge pricing if appropriate.
         * If offline: Provide helpful information.
         * Include only the most critical details. Avoid overwhelming the driver.
         * Use a friendly and professional tone, appropriate for a driving context.
@@ -131,7 +180,6 @@ Recent Driver Activity:
 
         Output:
         A brief, natural-sounding response for the Grab driver.
-
     ''';
   }
 
@@ -144,12 +192,15 @@ Recent Driver Activity:
     String? destination,
     String? paymentMethod,
     String? fareAmount,
-    String? tripDistance,
+    String? tripDistance, // Keep for backward compatibility
+    String? driverToPickupDistance,
+    String? pickupToDestinationDistance,
     String? estimatedPickupTime,
     String? estimatedTripDuration,
   }) {
     _isOnline = isOnline;
-    _hasActiveRequest = hasActiveRequest;
+    // If driver is offline, there can't be any active requests
+    _hasActiveRequest = isOnline ? hasActiveRequest : false;
 
     // Store ride-specific context when available
     if (pickupLocation != null) _rideContext['pickupLocation'] = pickupLocation;
@@ -157,54 +208,22 @@ Recent Driver Activity:
     if (destination != null) _rideContext['destination'] = destination;
     if (paymentMethod != null) _rideContext['paymentMethod'] = paymentMethod;
     if (fareAmount != null) _rideContext['fareAmount'] = fareAmount;
+    
+    // Store distance information (both legacy and new detailed format)
     if (tripDistance != null) _rideContext['tripDistance'] = tripDistance;
+    if (driverToPickupDistance != null) _rideContext['driverToPickupDistance'] = driverToPickupDistance;
+    if (pickupToDestinationDistance != null) _rideContext['pickupToDestinationDistance'] = pickupToDestinationDistance;
+    
+    // Store time estimates
     if (estimatedPickupTime != null)
       _rideContext['estimatedPickupTime'] = estimatedPickupTime;
     if (estimatedTripDuration != null)
       _rideContext['estimatedTripDuration'] = estimatedTripDuration;
-  }
-
-  /// Helper method to build ride context portion of the prompt
-  String _buildRideContextPrompt() {
-    final buffer = StringBuffer('\nActive Ride Details:\n');
-
-    if (_rideContext['pickupLocation'] != null) {
-      buffer.write('- Pickup: ${_rideContext['pickupLocation']}\n');
-
-      if (_rideContext['pickupDetail'] != null) {
-        buffer.write('  (${_rideContext['pickupDetail']})\n');
-      }
+    
+    // Clear ride context if offline
+    if (!isOnline) {
+      _rideContext.clear();
     }
-
-    if (_rideContext['destination'] != null) {
-      buffer.write('- Destination: ${_rideContext['destination']}\n');
-    }
-
-    if (_rideContext['fareAmount'] != null) {
-      buffer.write('- Fare: ${_rideContext['fareAmount']}');
-
-      if (_rideContext['paymentMethod'] != null) {
-        buffer.write(' (${_rideContext['paymentMethod']})\n');
-      } else {
-        buffer.write('\n');
-      }
-    }
-
-    if (_rideContext['tripDistance'] != null) {
-      buffer.write('- Trip distance: ${_rideContext['tripDistance']}\n');
-    }
-
-    if (_rideContext['estimatedPickupTime'] != null) {
-      buffer.write(
-          '- Est. pickup time: ${_rideContext['estimatedPickupTime']}\n');
-    }
-
-    if (_rideContext['estimatedTripDuration'] != null) {
-      buffer.write(
-          '- Est. trip duration: ${_rideContext['estimatedTripDuration']}\n');
-    }
-
-    return buffer.toString();
   }
 
   /// Clears the current ride context
