@@ -60,7 +60,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   GoogleMapController? _mapController;
   bool _mapInitialized = false; // Track if map has been initially centered
   List<Map<String, String>> _sessionConversationHistory = [];
-  bool _isInConversationSession = false;
   // Initial camera position (example coordinates - should be replaced with actual pickup location)
   static const LatLng _initialPosition =
       LatLng(3.1390, 101.6869); // KL coordinates
@@ -144,7 +143,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
 
-    _initializeLocation();
+    _isMapLoading = true;
+    
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
@@ -152,8 +152,33 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _setupTimerAnimation();
     _initializeWakeWordDetection();
     _initializeTts();
-    _setupLocationUpdates();
     _setupWeatherUpdates();
+
+    _isMapLoading = true;
+    // Add this near the start of your initState
+    // Pass the initial online status to GeminiService
+    _geminiService.updatePromptContext(
+      isOnline: _isOnline,
+      hasActiveRequest: _hasActiveRequest,
+    );
+    // Add a timeout to prevent getting stuck forever
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _isMapLoading) {
+        setState(() {
+          _isMapLoading = false;
+          print("Location timeout - proceeding without location");
+        });
+      }
+    });
+
+    // Call synchronously to ensure it runs immediately
+    _initializeLocation().then((_) {
+      if (mounted) {
+        setState(() {
+          _isMapLoading = false;
+        });
+      }
+    });
 
     // Add this callback to handle transcription completion
     audioProcessingService.onTranscriptionComplete =
@@ -301,6 +326,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _weatherData = weatherData;
           _isLoadingWeather = false;
+          
+          // Update Gemini with the latest weather information
+          _updateGeminiWithWeatherContext();
         });
       }
     };
@@ -312,6 +340,31 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _weatherUpdateTimer = Timer.periodic(const Duration(minutes: 15), (_) {
       _waitForLocationAndFetchWeather();
     });
+  }
+  
+  // Add this method to ensure Gemini always has updated weather data
+  void _updateGeminiWithWeatherContext() async {
+    if (_weatherData != null) {
+      // No need to fetch device context here since the weather is already updated 
+      // in the _weatherData variable and will be included in subsequent calls to getDeviceContext
+      
+      // Update GeminiService with current ride state
+      _geminiService.updatePromptContext(
+        isOnline: _isOnline,
+        hasActiveRequest: _hasActiveRequest,
+        // Include any active ride request details
+        pickupLocation: _hasActiveRequest ? _pickupLocation : null,
+        destination: _hasActiveRequest ? _destination : null,
+        paymentMethod: _hasActiveRequest ? _paymentMethod : null,
+        fareAmount: _hasActiveRequest ? _fareAmount : null,
+        driverToPickupDistance: _hasActiveRequest ? _driverToPickupDistance : null,
+        pickupToDestinationDistance: _hasActiveRequest ? _tripDistance : null,
+        estimatedPickupTime: _hasActiveRequest ? _estimatedPickupTime : null,
+        estimatedTripDuration: _hasActiveRequest ? _estimatedTripDuration : null,
+      );
+      
+      print('Updated Gemini context with weather: ${_weatherData!['main']}, ${_weatherData!['temperature']}°C ${_weatherData!['emoji']}');
+    }
   }
 
 // Add this helper method
@@ -331,6 +384,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // Check again if we have location data after initialization
     if (_currentPosition != null) {
       await _deviceInfo.fetchWeatherData();
+      // No need to call _updateGeminiWithWeatherContext here as it's called by the callback
     } else {
       print("Still no location available, using hardcoded weather data");
       setState(() {
@@ -341,6 +395,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           'description': 'Clear sky'
         };
         _isLoadingWeather = false;
+        
+        // Call update method even with default weather
+        _updateGeminiWithWeatherContext();
       });
     }
   }
@@ -865,8 +922,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Update driver marker with current location
       _updateDriverLocationMarker();
 
-      // Start location updates
-      _setupLocationUpdates();
+      // If map controller is already initialized, center map on driver position
+      if (_mapController != null) {
+        _centerMapOnDriverPosition();
+      }
+      
     } catch (e) {
       print("Error initializing location: $e");
       // Use a default location if there's an error
@@ -879,7 +939,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         "speed_accuracy": 0.0,
         "heading": 0.0,
       });
-      // Update driver marker with default location
+      
+      // Make sure we update the driver marker even with default location
       _updateDriverLocationMarker();
     }
   }
@@ -989,8 +1050,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         throw Exception('Recording file is empty');
       }
 
+      // Get the session context
+      final sessionContext = _generateSessionContext();
+      print('Session context length: ${sessionContext.length} characters');
+
       // Upload audio with context from current session
-      await audioProcessingService.uploadAudio(file);
+      await audioProcessingService.uploadAudio(
+        file,
+        conversationContext: sessionContext,
+      );
     } catch (e) {
       print('Error in _stopAndSendRecording: $e');
       setState(() {
@@ -1204,6 +1272,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
           infoWindow: const InfoWindow(title: 'Your Location'),
           zIndex: 2, // Ensure driver marker is on top of other markers
+          visible: true, // Explicitly set marker to be visible
         );
 
         setState(() {
@@ -1259,7 +1328,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
-  void abortRecord() async {
+  Future<void> abortRecord() async {
     try {
       print('\n=== Aborting Recording ===');
       await _stopSpeaking();
@@ -1267,9 +1336,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _amplitudeTimer = null;
 
       if (_isRecording) {
-        final path = await _recorder.stop();
-        // Delete the recorded file...
+        await _recorder.stop();
       }
+
+      // Reset conversation session state
+      _sessionConversationHistory = [];
 
       setState(() {
         _isRecording = false;
@@ -2243,8 +2314,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
                   // If we already have location by this point, center map on it
                   if (_currentPosition != null) {
-                    _centerMapOnDriverPosition();
+                    // Slight delay to ensure the map is fully loaded first
+                    Future.delayed(const Duration(milliseconds: 500), () {
+                      _centerMapOnDriverPosition();
+                    });
                   }
+                  
+                  // Set map initialized flag
+                  setState(() {
+                    _mapInitialized = true;
+                  });
                 },
                 onCameraMove: (CameraPosition position) {
                   // Show compass button when map is rotated
@@ -3437,42 +3516,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     return distance;
   }
 
-  // Update accurate distance information for the order
-  void _updateDistanceInformation() {
-    if (_currentPosition != null) {
-      // Driver's current position
-      final LatLng driverPosition =
-          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-
-      // These would normally come from your backend API with real coordinates
-      // Using actual coordinates for Sunway Pyramid Mall and KL Sentral
-      final LatLng pickupPosition =
-          LatLng(3.0733, 101.6073); // Sunway Pyramid Mall
-      final LatLng destinationPosition = LatLng(3.1348, 101.6867); // KL Sentral
-
-      // Calculate distances
-      final double driverToPickupDistance =
-          _calculateDistance(driverPosition, pickupPosition);
-      final double pickupToDestinationDistance =
-          _calculateDistance(pickupPosition, destinationPosition);
-
-      // Format distances with one decimal place
-      setState(() {
-        _driverToPickupDistance =
-            "${driverToPickupDistance.toStringAsFixed(1)} km";
-        _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
-
-        // Estimate pickup time - rough estimate based on average speed of 40 km/h
-        final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
-        _estimatedPickupTime = "$pickupMinutes min";
-
-        // Estimate trip duration - rough estimate based on average speed of 35 km/h (accounting for traffic)
-        final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
-        _estimatedTripDuration = "$tripMinutes min";
-      });
-    }
-  }
-
   // Set up route display on map with markers and polyline
   void _setupRouteDisplay(LatLng driverPosition, LatLng pickupPosition,
       LatLng destinationPosition) {
@@ -4094,13 +4137,17 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   // Updated method to move to current location and update weather
-  void _moveToCurrentLocation() {
+  void _moveToCurrentLocation() async {
     if (_mapController != null && _currentPosition != null) {
+      // Get the current zoom level to maintain it
+      final double currentZoom = await _mapController!.getZoomLevel();
+      
       // Use driver's actual position from current location
       final driverPosition =
           LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-      // If there's an active request/order, move the map view higher
+      // If there's an active request/order, adjust the target position slightly upward
+      // but maintain the current zoom level
       if (_hasActiveRequest) {
         final adjustedPosition = LatLng(
             driverPosition.latitude - 0.005, // Move up by 0.005 on the map
@@ -4110,18 +4157,19 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: adjustedPosition,
-              zoom:
-                  16, // Increased zoom level for better detail with order container
+              zoom: currentZoom, // Use current zoom level instead of hardcoded value
+              bearing: _mapBearing, // Preserve current rotation
             ),
           ),
         );
       } else {
-        // Center on driver's location normally
+        // Center on driver's location normally while maintaining zoom
         _mapController!.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: driverPosition,
-              zoom: 15,
+              zoom: currentZoom, // Use current zoom level instead of hardcoded value
+              bearing: _mapBearing, // Preserve current rotation
             ),
           ),
         );
@@ -4277,5 +4325,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         ),
       ),
     );
+    
+    // Ensure marker is visible after centering
+    if (_driverLocationMarker == null) {
+      _updateDriverLocationMarker();
+    }
   }
 }
