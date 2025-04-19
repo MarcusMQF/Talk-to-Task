@@ -19,6 +19,7 @@ import noisereduce as nr
 import subprocess
 import shutil
 from df.enhance import enhance, init_df, load_audio, save_audio
+from pystoi import stoi
 
 # Add this for Malaysian model
 tokenization_whisper.TASK_IDS = ["translate", "transcribe", "transcribeprecise"]
@@ -369,7 +370,9 @@ class AudioDenoiser:
             
             sample_rate = metadata.sample_rate if hasattr(metadata, 'sample_rate') else self.sample_rate
             print(f"Loaded audio with sample rate: {sample_rate}")
-
+            
+            original_audio_numpy = audio_data.cpu().numpy()
+            
             # Calculate original energy for metrics
             original_energy = torch.sum(audio_data ** 2).item()
             num_samples = audio_data.shape[0]
@@ -395,16 +398,38 @@ class AudioDenoiser:
                 min_length = min(audio_data.shape[0], enhanced_audio.shape[0])
                 audio_data = audio_data[:min_length]
                 enhanced_audio = enhanced_audio[:min_length]
+                original_audio_numpy = original_audio_numpy[:min_length]
 
             # Apply linear interpolation between original and enhanced audio
             blended_audio = blend_ratio * enhanced_audio + (1 - blend_ratio) * audio_data
             enhanced_audio = blended_audio  # Replace the enhanced audio with the blended version
 
+            enhanced_audio_numpy = enhanced_audio.cpu().numpy()
             # Calculate enhanced audio energy for metrics
             enhanced_energy = torch.sum(enhanced_audio ** 2).item()
 
             # An integer is required
             int_sample_rate = int(sample_rate)
+
+            stoi_score = None
+            try:
+                # STOI requires signals of sufficient length (at least 30ms)
+                min_samples = int(0.03 * int_sample_rate)  # 30ms minimum
+                if len(original_audio_numpy) >= min_samples and len(enhanced_audio_numpy) >= min_samples:
+                    # Ensure same length
+                    min_len = min(len(original_audio_numpy), len(enhanced_audio_numpy))
+                    stoi_score = stoi(
+                        original_audio_numpy[:min_len], 
+                        enhanced_audio_numpy[:min_len], 
+                        int_sample_rate, 
+                        extended=False
+                    )
+                    print(f"STOI Score: {stoi_score:.4f} (higher is better, range 0-1)")
+                else:
+                    print(f"Audio too short for STOI calculation: {len(original_audio_numpy)} samples")
+            except Exception as e:
+                print(f"Error calculating STOI: {str(e)}")
+                stoi_score = None
 
             # Save the enhanced audio
             output_path = wav_path.replace('.wav', '_denoised.wav')
@@ -434,7 +459,9 @@ class AudioDenoiser:
                 "metrics": {
                     "original_rms": float(original_rms),
                     "enhanced_rms": float(enhanced_rms),
-                    "noise_reduction": float(noise_reduction)
+                    "noise_reduction": float(noise_reduction),
+                    "noise_reduction_percentage": float(reduction_percentage),
+                    "stoi": float(stoi_score) if stoi_score is not None else None
                 }
             }
         except Exception as e:
