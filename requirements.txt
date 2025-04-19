@@ -18,3 +18,5 @@ pydub
 soundfile
 noisereduce # Noise reduction library for Whisper model
 python-multipart==0.0.6  # Multipart form data handling for FastAPI
+deepfilternet>=0.5.3 
+faster_whisper>=0.0.4  # Faster Whisper model for transcription

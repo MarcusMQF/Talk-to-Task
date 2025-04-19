@@ -4,10 +4,13 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'constants/app_theme.dart';
 import 'providers/voice_assistant_provider.dart';
 import 'providers/theme_provider.dart';
-import 'screens/ride_screen.dart';
+import '../services/get_device_info.dart';
+import '../screens/ride_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final deviceInfoService = DeviceInfoService();
+  await deviceInfoService.initialize();
   await dotenv.load(fileName: ".env");
   runApp(const MyApp());
 }
