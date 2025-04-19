@@ -413,24 +413,48 @@ class AudioDenoiser:
 
             stoi_score = None
             try:
+
+                if isinstance(original_audio_numpy, torch.Tensor):
+                    original_audio_numpy = original_audio_numpy.cpu().numpy()
+    
+                if isinstance(enhanced_audio_numpy, torch.Tensor):
+                    enhanced_audio_numpy = enhanced_audio_numpy.cpu().numpy()
+
+
+                original_audio_numpy = original_audio_numpy.squeeze()
+                enhanced_audio_numpy = enhanced_audio_numpy.squeeze()
+                
+                print(f"Audio shapes for STOI - Original: {original_audio_numpy.shape}, Enhanced: {enhanced_audio_numpy.shape}")
+                
+                # Check for extremely small values which might indicate data type issues
+                if np.abs(original_audio_numpy).max() < 1e-6:
+                    print("WARNING: Original audio has extremely small values, might cause STOI calculation issues")
+                
+
                 # STOI requires signals of sufficient length (at least 30ms)
                 min_samples = int(0.03 * int_sample_rate)  # 30ms minimum
+                
                 if len(original_audio_numpy) >= min_samples and len(enhanced_audio_numpy) >= min_samples:
                     # Ensure same length
                     min_len = min(len(original_audio_numpy), len(enhanced_audio_numpy))
+                    
+                    # If audio is very short but still meets minimum, use extended mode
+                    use_extended = min_len < int(0.25 * int_sample_rate)  # Use extended for < 250ms
+                    
                     stoi_score = stoi(
                         original_audio_numpy[:min_len], 
                         enhanced_audio_numpy[:min_len], 
                         int_sample_rate, 
-                        extended=False
+                        extended=use_extended  # Use extended mode for very short samples
                     )
                     print(f"STOI Score: {stoi_score:.4f} (higher is better, range 0-1)")
+                    print(f"Audio length used for STOI: {min_len / int_sample_rate:.3f} seconds")
                 else:
                     print(f"Audio too short for STOI calculation: {len(original_audio_numpy)} samples")
+                    print(f"Minimum required: {min_samples} samples ({min_samples / int_sample_rate:.3f} seconds)")
             except Exception as e:
                 print(f"Error calculating STOI: {str(e)}")
                 stoi_score = None
-
             # Save the enhanced audio
             output_path = wav_path.replace('.wav', '_denoised.wav')
             await asyncio.to_thread(save_audio, output_path, enhanced_audio, int_sample_rate)
