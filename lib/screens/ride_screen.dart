@@ -26,6 +26,7 @@ import 'dart:typed_data';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'dart:math';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class RideScreen extends StatefulWidget {
   const RideScreen({super.key});
@@ -209,9 +210,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       }
     };
 
-    // Position voice button in bottom right after layout is complete
+    // Position voice button from saved position or default position after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _positionVoiceButtonBottomRight();
+      _loadVoiceButtonPosition(); // Load saved position instead of setting default
       _setupVoiceCommandHandler();
 
       // Listen to theme changes and update map style accordingly
@@ -611,6 +612,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     setState(() {
       _voiceButtonPosition = Offset(targetX, safeY);
     });
+    
+    // Save the new position to SharedPreferences
+    _saveVoiceButtonPosition();
   }
 
   void _setupAnimations() {
@@ -1994,13 +1998,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
-                            _dismissRequest();
-                            // Simulate new request after a delay
-                            Future.delayed(const Duration(seconds: 3), () {
-                              if (_isOnline && mounted) {
-                                _showNewRequest();
-                              }
-                            });
+                            _showDeclineConfirmation();
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: isDarkMode
@@ -2505,6 +2503,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         },
         onPanEnd: (details) {
           _snapVoiceButtonToEdge();
+          // No need to save here as _snapVoiceButtonToEdge already saves the position
         },
         child: Container(
           width: 64,
@@ -2871,6 +2870,70 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
+  // Method to show decline confirmation dialog
+  void _showDeclineConfirmation() {
+    // Get theme mode
+    final isDarkMode =
+        Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
+        title: Text(
+          'Decline Ride?',
+          style: TextStyle(
+            color: isDarkMode ? Colors.white : Colors.black,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to decline this ride request?',
+          style: TextStyle(
+            color: isDarkMode ? Colors.grey.shade300 : Colors.black87,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('NO',
+                style: TextStyle(
+                    color: isDarkMode
+                        ? Colors.grey.shade300
+                        : Colors.grey.shade700)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              
+              // Speak decline confirmation
+              _speakResponse("Ride declined.");
+              
+              // Dismiss the request
+              _dismissRequest();
+              
+              // Show a red snackbar confirming the decline
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Ride declined'),
+                  duration: Duration(seconds: 2),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              
+              // Simulate new request after a delay
+              Future.delayed(const Duration(seconds: 3), () {
+                if (_isOnline && mounted) {
+                  _showNewRequest();
+                }
+              });
+            },
+            child: const Text('YES', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Method to cancel the trip and exit navigation mode
   void _cancelTrip() {
     // Speak confirmation of cancellation
@@ -2957,6 +3020,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           screenHeight - 180.0 // Bottom edge - button height - some padding
           );
     });
+    
+    // Don't save this position as it's the default position
+    // We only want to save positions that the user has explicitly set
   }
 
   void _setupLocationUpdates() {
@@ -4403,6 +4469,48 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // Ensure marker is visible after centering
     if (_driverLocationMarker == null) {
       _updateDriverLocationMarker();
+    }
+  }
+
+  // Method to save voice button position to SharedPreferences
+  Future<void> _saveVoiceButtonPosition() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble('voice_button_x', _voiceButtonPosition.dx);
+      await prefs.setDouble('voice_button_y', _voiceButtonPosition.dy);
+      print('Voice button position saved: $_voiceButtonPosition');
+    } catch (e) {
+      print('Error saving voice button position: $e');
+    }
+  }
+
+  // Method to load voice button position from SharedPreferences
+  Future<void> _loadVoiceButtonPosition() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final double? x = prefs.getDouble('voice_button_x');
+      final double? y = prefs.getDouble('voice_button_y');
+      
+      if (x != null && y != null) {
+        // Ensure the position is within screen bounds
+        final screenWidth = MediaQuery.of(context).size.width;
+        final screenHeight = MediaQuery.of(context).size.height;
+        
+        final double safeX = x.clamp(20.0, screenWidth - 84.0);
+        final double safeY = y.clamp(120.0, screenHeight - 100.0);
+        
+        setState(() {
+          _voiceButtonPosition = Offset(safeX, safeY);
+        });
+        print('Voice button position loaded: $_voiceButtonPosition');
+      } else {
+        // If no saved position, position at default location
+        _positionVoiceButtonBottomRight();
+      }
+    } catch (e) {
+      print('Error loading voice button position: $e');
+      // Fall back to default position
+      _positionVoiceButtonBottomRight();
     }
   }
 }
