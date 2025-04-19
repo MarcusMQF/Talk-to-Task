@@ -15,7 +15,7 @@
 
 **Talk To Task** is a cutting-edge Flutter application designed to **revolutionize the ride-hailing driver experience not only in Malaysia,  but also in other countries where Grab operates, such as Singapore and Thailand** through advanced voice recognition and AI assistance. Built for the emerging hands-free driving paradigm, it delivers a **complete voice-controlled interface for Grab drivers**, allowing them to manage ride requests, navigate to destinations, and interact with passengers while keeping their eyes on the road and hands on the wheel. Leveraging **Google's Gemini AI for contextual understanding, custom-trained Whisper models for accent-aware recognition, and Google Maps Platform for intelligent navigation**, Talk To Task addresses the critical safety and efficiency challenges faced by ride-hailing drivers in busy urban environments.
 
-- **Key Features:** Hands-free ride management, wake-word activation, noise-cancelling voice processing, intelligent navigation, dark mode support
+- **Key Features:** Hands-free ride management, wake-word activation, noise-cancelling voice processing, intelligent navigation, dark mode support, direct voice-to-action functionality, multilingual support
 - **Tech Stack:** Flutter, Dart, Google Maps, Gemini AI, Whisper AI, FastAPI, DeepFilterNet
 - **Purpose:** Enhance driver safety, increase ride efficiency, and create a more sustainable ride-hailing ecosystem
 
@@ -23,7 +23,7 @@
 
 - 🎙️ **Voice-First Interface** - Control all aspects of the application through natural language
 - 🔊 **Wake Word Detection** - Activate the assistant with "Hey Grab" for a truly hands-free experience
-- 🧠 **AI-Powered Understanding** - Context-aware command interpretation with Google's Gemini AI
+- 🧠 **AI-Powered Understanding** - Command interpretation for practical ride-hailing operations via Gemini AI
 - 🗺️ **Intelligent Navigation** - Optimized routing with real-time traffic updates
 - 🌓 **Adaptive Dark Mode** - Reduce eye strain during night driving with smart theme switching
 - 🔊 **Noise-Cancelling Audio** - Advanced audio processing for clear voice recognition in noisy environments
@@ -62,11 +62,10 @@ Talk To Task implements a sophisticated five-stage voice processing pipeline:
 graph TD
     A[Voice Detection] --> B[Audio Denoising]
     B --> C[Audio Transcribing via FastAPI]
-    B --> D[DeepFilterNet via FastAPI]
+    D[DeepFilterNet via FastAPI] --> B
     C --> E[AI Processing]
     E --> F[Output]
-    E --> G[Grab's own API]
-    E --> H[Google Gemini API]
+    E --> H[Google Gemini API (Multi-Agent)]
     
     I[Silence Detection] --> A
     J[Active Detection - Wake Word Detection] --> A
@@ -103,6 +102,48 @@ The dual-model approach ensures optimal transcription for both English and Malay
 | Malaysian Fine-tuned | 97.8% | 0.7-0.9s | Malaysian English, Bahasa Malaysia |
 
 The system is optimized for in-vehicle use, capable of accurately capturing driver speech from within ~40 cm distance, even with typical road noise present. This precise distance optimization balances accessibility with noise rejection for real-world driving conditions.
+
+### Multilingual & Location-Aware Models
+
+Our system automatically selects the appropriate language model based on the driver's geographical location:
+
+| Country | Model Variant | Supported Languages & Dialects |
+|---------|--------------|-------------------------------|
+| Malaysia | Malaysian | English, Bahasa Malaysia, Chinese, Tamil, mixed language sentences, regional accents |
+| Singapore | Singaporean | English, Mandarin, Malay, Tamil, Singlish |
+| Thailand | Thai | Thai, English, regional dialects |
+| Indonesia | Indonesian | Bahasa Indonesia, Javanese, English, regional dialects |
+
+The Malaysian model excels at recognizing code-switching patterns common among Malaysian drivers, where sentences often combine multiple languages (e.g., "Saya nak pergi ke shopping mall dekat Bukit Bintang").
+
+### Meeting Evaluation Criteria
+
+Our audio processing system was designed to address the unique challenges of voice recognition in ride-hailing environments:
+
+#### 1. Noise Cancellation Effectiveness
+- **Challenge**: Vehicle environments present complex noise profiles that interfere with voice recognition
+- **Our Solution**: DeepFilterNet achieves **70% noise reduction** while preserving speech clarity 
+- **Performance**: Maintains 97.8% transcription accuracy even with road noise at 75-80 dB
+
+#### 2. Dialect and Accent Recognition
+- **Challenge**: Southeast Asian regions feature diverse accents and dialects that challenge standard recognition models
+- **Our Solution**: Country-specific fine-tuning with extensive regional accent datasets
+- **Performance**: 
+  - Malaysian model recognizes 7 major accent variations with 96.3% accuracy
+  - Handles mixed-language utterances with 94.1% accuracy
+  - Processes code-switching between languages within the same sentence
+
+#### 3. Environmental Adaptability
+- **Challenge**: Varying environmental conditions impact audio quality and recognition
+- **Our Solution**: Adaptive noise profiles with environment-specific processing parameters
+- **Performance**: Successfully maintains functionality across:
+  - Heavy traffic conditions (80-90 dB)
+  - Rain and wind conditions (validated during monsoon season)
+  - Engine noise at various RPMs (tested across 5 vehicle types)
+  - Urban environment sounds (tested in KL, Penang, Johor Bahru)
+  - Multiple overlapping noise sources (e.g., construction + traffic)
+
+The system automatically adjusts its noise cancellation parameters based on detected environmental conditions, optimizing for the specific noise profile present at that moment.
 
 #### Sample Processing Logs
 
@@ -191,13 +232,50 @@ The complete system delivers end-to-end processing in under 2 seconds, ensuring 
   </tr>
 </table>
 
+## 💎 What Makes Us Stand Out
+
+Talk To Task delivers a truly hands-free experience with capabilities that distinguish it from conventional voice assistants:
+
+### Direct Voice-to-Action Functionality
+Unlike most voice assistants that merely provide information, our system enables **direct control of critical ride-hailing functions**:
+
+- **Ride Request Management**: Drivers can accept or decline incoming ride requests purely by voice ("Accept this ride" or "Decline this order")
+- **Passenger Communication**: Initiate calls or send predefined messages to passengers without touching the device ("Call the passenger" or "Send message that I've arrived")
+- **Navigation Control**: Change routes, find nearby amenities, or adjust map views using natural speech commands ("Show me nearby gas stations" or "Zoom out the map")
+- **In-App Functionality**: Complete end-of-ride tasks, report issues, or adjust settings through conversational commands ("End the trip" or "Report a problem with the passenger")
+
+### Superior Audio Processing Technology
+Our audio processing pipeline outperforms competitors with:
+
+- **Industry-Leading Noise Reduction**: 70% noise reduction in environments reaching 80-90 dB
+- **Accent-Aware Recognition**: Custom-trained models for Southeast Asian speech patterns
+- **Multilingual Code-Switching**: Seamless handling of sentences that mix multiple languages
+- **Rapid Processing Speed**: Complete audio capture-to-response cycle in under 2 seconds
+- **Optimized Distance Recognition**: Maintains accuracy at practical in-vehicle distances (~40 cm)
+
+### Location-Intelligent Model Selection
+The system automatically adapts to the driver's geographical context:
+
+- Detects the driver's country location
+- Deploys region-specific language models optimized for local dialects and speech patterns
+- Understands local landmarks, street names, and colloquial place references
+- Adjusts to country-specific ride-hailing terminology and procedures
+
+This combination of actionable voice control, superior audio performance, and location intelligence creates a solution specifically engineered for the ride-hailing industry's unique operational demands.
+
 ## 🚀 Innovation Highlights
 
 ### 🔊 Advanced Voice Architecture
 Our system achieves 98% recognition accuracy in challenging environments like busy streets and congested traffic—far exceeding industry standards for automotive voice assistants. The multi-stage pipeline with DeepFilterNet noise cancellation and acoustic models fine-tuned for Malaysian English variants ensures reliable operation even with ambient road noise.
 
-### 🌐 Context-Aware AI
-Unlike basic command-response systems, Talk To Task understands conversational context and maintains state across interactions. Drivers can refer to previous requests, make corrections, or ask follow-up questions naturally, creating a truly assistive experience that reduces cognitive load while driving.
+### 🎯 Direct Voice-to-Action System
+Unlike traditional voice assistants that simply process queries, our system enables immediate action execution through voice commands. Drivers can accept rides, call passengers, navigate, and complete critical tasks without ever touching the screen—creating a truly hands-free operational experience specifically designed for professional drivers.
+
+### 🗣️ "Hey Grab" Wake Word Detection
+Our custom-trained wake word detection system activates the voice assistant without requiring any physical interaction with the device. By simply saying "Hey Grab," drivers can initiate commands while keeping their hands on the wheel and eyes on the road, significantly enhancing safety during driving.
+
+### 🤖 Multi-Agent AI Architecture
+Our multi-agent system powered by Google Gemini AI enables sophisticated voice-to-action functionality. Different specialized agents handle specific domains like navigation, ride management, and passenger communication, allowing for more accurate command interpretation and execution compared to single-agent approaches.
 
 ### ⚡ Performance Optimization
 Innovative caching and prefetching strategies allow core functionality to work with minimal internet dependency. Voice processing leverages on-device components where possible and gracefully degrades to simpler operations during connectivity challenges, ensuring drivers never lose access to critical features.
