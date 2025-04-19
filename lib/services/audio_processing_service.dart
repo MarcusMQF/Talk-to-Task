@@ -21,7 +21,8 @@ class AudioProcessingService {
   static const int PRE_SPEECH_SILENCE_COUNT = 100;
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
-  static const String SERVER_URL = 'http://10.168.107.195:8000/upload/';
+  static const String SERVER_URL = '$BASE_URL/upload/';
+  static const String BASE_URL = 'https://843a-103-18-0-17.ngrok-free.app';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
@@ -325,9 +326,9 @@ class AudioProcessingService {
       final stopwatch = Stopwatch()..start();
       print('📤 Sending request to backend...');
       final response = await request.send().timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 20),
         onTimeout: () {
-          print('❌ Backend request timed out after 15 seconds');
+          print('❌ Backend request timed out after 20 seconds');
           throw TimeoutException('Backend request timed out');
         },
       );
