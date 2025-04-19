@@ -3160,23 +3160,34 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // Clear navigation route
       _polylines.clear();
+      
+      // Keep only the driver marker
+      _markers.clear();
+      if (_currentPosition != null) {
+        // Update driver marker
+        _updateDriverLocationMarker();
+      }
     });
 
-    // Focus back on device's current location
-    if (_mapController != null && _currentPosition != null) {
-      final driverPosition =
-          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+    // Get a fresh location update before focusing on it
+    _updateDriverLocation().then((_) {
+      // Focus back on device's current location
+      if (_mapController != null && _currentPosition != null) {
+        final driverPosition =
+            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-      // Animate camera to focus on driver's current location with appropriate zoom level
-      _mapController!.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: driverPosition,
-            zoom: 15, // Standard zoom level for city navigation
+        // Animate camera to focus on driver's current location with appropriate zoom level
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: driverPosition,
+              zoom: 15, // Standard zoom level for city navigation
+              bearing: 0.0, // Reset bearing to north
+            ),
           ),
-        ),
-      );
-    }
+        );
+      }
+    });
 
     // Show cancellation message
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3199,13 +3210,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               backgroundColor: AppTheme.grabGreen,
             ),
           );
-        }
-      });
-
-      // Show a new order request after a short delay
-      Future.delayed(const Duration(seconds: 5), () {
-        if (mounted && _isOnline) {
-          _showNewRequest();
+          
+          // Show a new request after the ready message
+          if (_isOnline && mounted) {
+            Future.delayed(const Duration(seconds: 3), () {
+              if (mounted && _isOnline) {
+                _showNewRequest();
+              }
+            });
+          }
         }
       });
     }
@@ -3344,9 +3357,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _lockCameraPosition(true);
       });
 
-      // Speak confirmation of accepting the order
-      _speakResponse(
-          "Order accepted. Starting navigation to pickup location at ${_pickupLocation}.");
+      // Remove TTS for accepting the order
+      // _speakResponse(
+      //    "Order accepted. Starting navigation to pickup location at ${_pickupLocation}.");
 
       // Get a fresh location update when accepting a ride
       await _updateDriverLocation();
@@ -3642,7 +3655,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _markers.clear();
       _polylines.clear();
 
-      // Add pickup location marker (green)
+      // Add driver's current location marker (now at pickup)
       _driverLocationMarker = Marker(
         markerId: const MarkerId('driver_location'),
         position: pickupPosition, // Position at pickup location
@@ -3675,6 +3688,21 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
     // Fit both markers on the map
     _fitMarkersOnMap([pickupPosition, destinationPosition]);
+
+    // Update current position to be at pickup location
+    setState(() {
+      // Override the current position data for navigation purposes
+      // This makes sure that even when we fetch ride details, we'll show correct route
+      _currentPosition = LocationData.fromMap({
+        "latitude": pickupPosition.latitude,
+        "longitude": pickupPosition.longitude,
+        "accuracy": 0.0,
+        "altitude": 0.0,
+        "speed": 0.0,
+        "speed_accuracy": 0.0,
+        "heading": 0.0,
+      });
+    });
 
     // Fetch updated route details for destination
     _fetchRideDetails();
@@ -3740,23 +3768,34 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // Clear navigation route
       _polylines.clear();
+      
+      // Keep only the driver marker
+      _markers.clear();
+      if (_currentPosition != null) {
+        // Update driver marker
+        _updateDriverLocationMarker();
+      }
     });
 
-    // Focus back on device's current location
-    if (_mapController != null && _currentPosition != null) {
-      final driverPosition =
-          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+    // Get a fresh location update before focusing on it
+    _updateDriverLocation().then((_) {
+      // Focus back on device's current location
+      if (_mapController != null && _currentPosition != null) {
+        final driverPosition =
+            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-      // Animate camera to focus on driver's current location with appropriate zoom level
-      _mapController!.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: driverPosition,
-            zoom: 15, // Standard zoom level for city navigation
+        // Animate camera to focus on driver's current location with appropriate zoom level
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: driverPosition,
+              zoom: 15, // Standard zoom level for city navigation
+              bearing: 0.0, // Reset bearing to north
+            ),
           ),
-        ),
-      );
-    }
+        );
+      }
+    });
 
     // Show a brief message to indicate the driver is available for new orders
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3807,86 +3846,146 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Get API key from environment variables
       final apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
 
-      // First API call: Driver to pickup
-      final String driverToPickupUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
-          'origin=${driverPosition.latitude},${driverPosition.longitude}'
-          '&destination=${pickupPosition.latitude},${pickupPosition.longitude}'
-          '&mode=driving'
-          '&key=$apiKey';
+      // Different API calls based on navigation state
+      if (_isNavigatingToPickup) {
+        // When navigating to pickup, only need driver->pickup route
+        final String driverToPickupUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
+            'origin=${driverPosition.latitude},${driverPosition.longitude}'
+            '&destination=${pickupPosition.latitude},${pickupPosition.longitude}'
+            '&mode=driving'
+            '&key=$apiKey';
 
-      // Second API call: Pickup to destination
-      final String pickupToDestinationUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
-          'origin=${pickupPosition.latitude},${pickupPosition.longitude}'
-          '&destination=${destinationPosition.latitude},${destinationPosition.longitude}'
-          '&mode=driving'
-          '&key=$apiKey';
+        final driverToPickupResponse = await http.get(Uri.parse(driverToPickupUrl));
+        final driverToPickupData = json.decode(driverToPickupResponse.body);
 
-      // Make both API calls in parallel
-      final driverToPickupResponse = http.get(Uri.parse(driverToPickupUrl));
-      final pickupToDestinationResponse = http.get(Uri.parse(pickupToDestinationUrl));
-
-      // Wait for both responses
-      final responses = await Future.wait([driverToPickupResponse, pickupToDestinationResponse]);
-      
-      final driverToPickupData = json.decode(responses[0].body);
-      final pickupToDestinationData = json.decode(responses[1].body);
-
-      // Check if both requests were successful
-      if (responses[0].statusCode == 200 && 
-          responses[1].statusCode == 200 &&
-          driverToPickupData['status'] == 'OK' &&
-          pickupToDestinationData['status'] == 'OK') {
-        
-        // Extract data from first route (driver to pickup)
-        final driverToPickupRoutes = driverToPickupData['routes'] as List;
-        
-        // Extract data from second route (pickup to destination)
-        final pickupToDestinationRoutes = pickupToDestinationData['routes'] as List;
-
-        if (driverToPickupRoutes.isNotEmpty && pickupToDestinationRoutes.isNotEmpty) {
-          // Get distance and duration from driver to pickup
-          final driverToPickupLeg = driverToPickupRoutes[0]['legs'][0];
-          final String driverToPickupDistance = driverToPickupLeg['distance']['text'];
-          final String pickupETA = driverToPickupLeg['duration']['text'];
+        if (driverToPickupResponse.statusCode == 200 && driverToPickupData['status'] == 'OK') {
+          final driverToPickupRoutes = driverToPickupData['routes'] as List;
           
-          // Get distance and duration from pickup to destination
-          final pickupToDestinationLeg = pickupToDestinationRoutes[0]['legs'][0];
-          final String pickupToDestinationDistance = pickupToDestinationLeg['distance']['text'];
-          final String tripDuration = pickupToDestinationLeg['duration']['text'];
-
-          // Update the UI with accurate information from Google Maps API
-          setState(() {
-            _driverToPickupDistance = driverToPickupDistance;
-            _tripDistance = pickupToDestinationDistance;
-            _estimatedPickupTime = pickupETA;
-            _estimatedTripDuration = tripDuration;
-            _isDirectionsLoading = false;
-          });
-
-          // Only show route on map if we're in navigation mode
-          // When driver just has an active request but hasn't accepted yet, don't show route
-          if (_isNavigationMode) {
-            // Show route on map - using different methods based on phase
-            if (_isNavigatingToPickup) {
-              // During pickup phase, we can use the specialized method for pickup route
-              _showRouteToPickup();
-            } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
-              // Show route to destination only when passenger is picked up
-              _setupRouteDisplay(
-                  driverPosition, pickupPosition, destinationPosition);
-            }
+          if (driverToPickupRoutes.isNotEmpty) {
+            final driverToPickupLeg = driverToPickupRoutes[0]['legs'][0];
+            final String driverToPickupDistance = driverToPickupLeg['distance']['text'];
+            final String pickupETA = driverToPickupLeg['duration']['text'];
+            
+            // Update the UI with pickup information
+            setState(() {
+              _driverToPickupDistance = driverToPickupDistance;
+              _estimatedPickupTime = pickupETA;
+              _isDirectionsLoading = false;
+            });
+            
+            // Only show route to pickup
+            _showRouteToPickup();
+          } else {
+            _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
           }
         } else {
-          // Fallback to basic calculation if no routes returned
+          _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+        }
+      } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
+        // After pickup confirmed - only need pickup->destination route
+        final String pickupToDestinationUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
+            'origin=${pickupPosition.latitude},${pickupPosition.longitude}'
+            '&destination=${destinationPosition.latitude},${destinationPosition.longitude}'
+            '&mode=driving'
+            '&key=$apiKey';
+
+        final pickupToDestinationResponse = await http.get(Uri.parse(pickupToDestinationUrl));
+        final pickupToDestinationData = json.decode(pickupToDestinationResponse.body);
+
+        if (pickupToDestinationResponse.statusCode == 200 && pickupToDestinationData['status'] == 'OK') {
+          final pickupToDestinationRoutes = pickupToDestinationData['routes'] as List;
+          
+          if (pickupToDestinationRoutes.isNotEmpty) {
+            final pickupToDestinationLeg = pickupToDestinationRoutes[0]['legs'][0];
+            final String pickupToDestinationDistance = pickupToDestinationLeg['distance']['text'];
+            final String tripDuration = pickupToDestinationLeg['duration']['text'];
+            
+            // Update the UI with destination information
+            setState(() {
+              _tripDistance = pickupToDestinationDistance;
+              _estimatedTripDuration = tripDuration;
+              _isDirectionsLoading = false;
+            });
+
+            // Show route to destination only - don't include driver to pickup anymore
+            _setupRouteDisplay(
+                pickupPosition, pickupPosition, destinationPosition);
+          } else {
+            _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+          }
+        } else {
           _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
         }
       } else {
-        // Fallback to basic calculation if API calls fail
-        print('Directions API error: ${driverToPickupData['status']} / ${pickupToDestinationData['status']}');
-        _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+        // Both API calls for initial request display (not in navigation mode yet)
+        final String driverToPickupUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
+            'origin=${driverPosition.latitude},${driverPosition.longitude}'
+            '&destination=${pickupPosition.latitude},${pickupPosition.longitude}'
+            '&mode=driving'
+            '&key=$apiKey';
+
+        final String pickupToDestinationUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
+            'origin=${pickupPosition.latitude},${pickupPosition.longitude}'
+            '&destination=${destinationPosition.latitude},${destinationPosition.longitude}'
+            '&mode=driving'
+            '&key=$apiKey';
+
+        // Make both API calls in parallel
+        final driverToPickupResponse = http.get(Uri.parse(driverToPickupUrl));
+        final pickupToDestinationResponse = http.get(Uri.parse(pickupToDestinationUrl));
+
+        // Wait for both responses
+        final responses = await Future.wait([driverToPickupResponse, pickupToDestinationResponse]);
+        
+        final driverToPickupData = json.decode(responses[0].body);
+        final pickupToDestinationData = json.decode(responses[1].body);
+
+        // Process responses as before for initial ride request
+        if (responses[0].statusCode == 200 && 
+            responses[1].statusCode == 200 &&
+            driverToPickupData['status'] == 'OK' &&
+            pickupToDestinationData['status'] == 'OK') {
+          
+          final driverToPickupRoutes = driverToPickupData['routes'] as List;
+          final pickupToDestinationRoutes = pickupToDestinationData['routes'] as List;
+
+          if (driverToPickupRoutes.isNotEmpty && pickupToDestinationRoutes.isNotEmpty) {
+            // Get distance and duration from driver to pickup
+            final driverToPickupLeg = driverToPickupRoutes[0]['legs'][0];
+            final String driverToPickupDistance = driverToPickupLeg['distance']['text'];
+            final String pickupETA = driverToPickupLeg['duration']['text'];
+            
+            // Get distance and duration from pickup to destination
+            final pickupToDestinationLeg = pickupToDestinationRoutes[0]['legs'][0];
+            final String pickupToDestinationDistance = pickupToDestinationLeg['distance']['text'];
+            final String tripDuration = pickupToDestinationLeg['duration']['text'];
+
+            // Update the UI with accurate information from Google Maps API
+            setState(() {
+              _driverToPickupDistance = driverToPickupDistance;
+              _tripDistance = pickupToDestinationDistance;
+              _estimatedPickupTime = pickupETA;
+              _estimatedTripDuration = tripDuration;
+              _isDirectionsLoading = false;
+            });
+
+            // Show route on map if in navigation mode
+            if (_isNavigationMode) {
+              if (_isNavigatingToPickup) {
+                _showRouteToPickup();
+              } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
+                _setupRouteDisplay(
+                    pickupPosition, pickupPosition, destinationPosition);
+              }
+            }
+          } else {
+            _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+          }
+        } else {
+          _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+        }
       }
     } catch (e) {
-      // Fallback to basic calculation on any error
       print('Error fetching ride details: $e');
       
       if (_currentPosition != null) {
@@ -4013,47 +4112,74 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _markers.clear();
     _polylines.clear();
 
-    // Add driver's current location marker
-    _driverLocationMarker = Marker(
-      markerId: const MarkerId('driver_location'),
-      position: driverPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-      infoWindow: const InfoWindow(title: 'Your Location'),
-      zIndex: 2, // Ensure driver marker is on top of other markers
-    );
+    if (_isNavigatingToPickup) {
+      // During pickup phase - show driver location and pickup location
+      
+      // Add driver's current location marker
+      _driverLocationMarker = Marker(
+        markerId: const MarkerId('driver_location'),
+        position: driverPosition,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        infoWindow: const InfoWindow(title: 'Your Location'),
+        zIndex: 2, // Ensure driver marker is on top of other markers
+      );
 
-    // Add pickup location marker
-    _pickupLocationMarker = Marker(
-      markerId: const MarkerId('pickup_location'),
-      position: pickupPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-      infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
-    );
+      // Add pickup location marker
+      _pickupLocationMarker = Marker(
+        markerId: const MarkerId('pickup_location'),
+        position: pickupPosition,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
+      );
 
-    // Add destination marker
-    Marker destinationMarker = Marker(
-      markerId: const MarkerId('destination'),
-      position: destinationPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-      infoWindow: InfoWindow(title: 'Destination: $_destination'),
-    );
+      // Add destination marker (but don't draw route to it yet)
+      Marker destinationMarker = Marker(
+        markerId: const MarkerId('destination'),
+        position: destinationPosition,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: 'Destination: $_destination'),
+      );
 
-    // Add all markers to the map
-    _markers.add(_driverLocationMarker!);
-    _markers.add(_pickupLocationMarker!);
-    _markers.add(destinationMarker);
+      // Add all markers to the map
+      _markers.add(_driverLocationMarker!);
+      _markers.add(_pickupLocationMarker!);
+      _markers.add(destinationMarker);
 
-    // Create route polylines for driver to pickup and pickup to destination using API-based routing
-    _createRouteLinePoints(
-        driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
-    _createRouteLinePoints(pickupPosition, destinationPosition,
-        AppTheme.grabGreen, 'route_to_destination');
+      // Create route from driver to pickup only
+      _createRouteLinePoints(
+          driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
+    } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
+      // After pickup phase - only show pickup location and destination
+      
+      // Use pickup location as the current position
+      _driverLocationMarker = Marker(
+        markerId: const MarkerId('driver_location'),
+        position: pickupPosition, // Driver is now at pickup location
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        infoWindow: const InfoWindow(title: 'Your Location'),
+        zIndex: 2,
+      );
 
-    // Fit all markers on the map
-    _fitAllMarkersOnMap();
+      // Add destination marker
+      Marker destinationMarker = Marker(
+        markerId: const MarkerId('destination'),
+        position: destinationPosition,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: 'Destination: $_destination'),
+      );
+
+      // Only add current position and destination markers
+      _markers.add(_driverLocationMarker!);
+      _markers.add(destinationMarker);
+
+      // Only create route from pickup to destination
+      _createRouteLinePoints(pickupPosition, destinationPosition, 
+          AppTheme.grabGreen, 'route_to_destination');
+    }
   }
 
   // Fit all markers on the map
+  // ignore: unused_element
   void _fitAllMarkersOnMap() {
     if (_mapController == null || _markers.isEmpty) return;
 
