@@ -146,6 +146,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   static const int _maxVoiceRetries = 2;
   int _voiceRetryCount = 0;
 
+  // Add camera lock state
+  bool _cameraLocked = false;
+
   @override
   void initState() {
     super.initState();
@@ -1727,13 +1730,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _clearTtsCompletionHandler() {
-    print("Clearing previous TTS completion handlers");
-    _flutterTts.setCompletionHandler(() {
-      print("Empty handler triggered (should not see this)");
-    });
-  }
-
 // Replace your announceNewRideRequest method with this implementation
 // Replace the _announceNewRideRequest method with this implementation
   void _announceNewRideRequest() {
@@ -1796,11 +1792,81 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
     } catch (e) {
       print('Error in _startVoiceResponseListener: $e');
-      setState(() {
-        _isRecording = false;
-      });
+      _isRecording = false;
     }
   }
+
+// Add a specialized amplitude monitoring method for ride responses
+  void _startRideResponseAmplitudeMonitoring() {
+    // Ensure we don't have multiple timers
+    _amplitudeTimer?.cancel();
+
+    int readingsToSkip = 2;
+    _amplitudeTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+      if (!_isRecording) {
+        print("Recording stopped, cancelling amplitude timer");
+        timer.cancel();
+        return;
+      }
+
+      try {
+        final amplitude = await _recorder.getAmplitude();
+        double newAmplitude = amplitude.current;
+
+        // Skip invalid amplitude values
+        if (newAmplitude.isInfinite || newAmplitude.isNaN) {
+          print('⚠️ Skipping invalid amplitude value');
+          return;
+        }
+
+        _currentAmplitude = newAmplitude;
+
+        // Handle initial readings
+        if (readingsToSkip > 0) {
+          _lastAmplitude = _currentAmplitude;
+          readingsToSkip--;
+          return;
+        }
+
+        // Amplitude analysis
+        double percentageChange = 0.0;
+        if (_lastAmplitude.abs() > 0.001 && !_lastAmplitude.isInfinite) {
+          percentageChange =
+              ((_currentAmplitude - _lastAmplitude) / _lastAmplitude.abs()) *
+                  100;
+          percentageChange = percentageChange.clamp(-1000.0, 1000.0);
+
+          // Speech detection
+          if (percentageChange.abs() > AMPLITUDE_CHANGE_THRESHOLD) {
+            if (!_hasDetectedSpeech) {
+              print('Speech detected in ride response');
+              _hasDetectedSpeech = true;
+              _silenceDuration = POST_SPEECH_SILENCE_COUNT;
+            }
+            _silenceCount = 0;
+          }
+          // Silence detection
+          else if (_currentAmplitude < SILENCE_THRESHOLD) {
+            _silenceCount++;
+            if (_silenceCount >= _silenceDuration) {
+              print('Recording stopped - Silence duration reached');
+              timer.cancel();
+              _stopRideResponseRecordingAndProcess();
+            }
+          } else {
+            _silenceCount = 0;
+          }
+
+          _lastAmplitude = _currentAmplitude;
+        }
+      } catch (e) {
+        print('❌ Error in amplitude monitoring: $e');
+      }
+    });
+  }
+
+// Add method to process the transcription for ride responses
 
   Widget _buildRequestCard() {
     if (!_hasActiveRequest) return const SizedBox.shrink();
@@ -4738,5 +4804,37 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Fall back to default position
       _positionVoiceButtonBottomRight();
     }
+  }
+
+  // Add this method to manually update location when needed
+  Future<LocationData?> _updateDriverLocation() async {
+    try {
+      // Get a fresh location update
+      LocationData currentLocation = await _location.getLocation();
+      
+      if (currentLocation.latitude != null && currentLocation.longitude != null) {
+        print("📍 Manual location update: ${currentLocation.latitude}, ${currentLocation.longitude}");
+        
+        setState(() {
+          _currentPosition = currentLocation;
+          // Update the marker with the new position
+          _updateDriverMarkerOnly();
+        });
+        
+        return currentLocation;
+      }
+    } catch (e) {
+      print("❌ Error updating driver location: $e");
+    }
+    
+    return null;
+  }
+
+  // Add the missing _lockCameraPosition method
+  void _lockCameraPosition(bool lock) {
+    setState(() {
+      _cameraLocked = lock;
+    });
+    print("Camera position ${lock ? 'locked' : 'unlocked'}");
   }
 }
