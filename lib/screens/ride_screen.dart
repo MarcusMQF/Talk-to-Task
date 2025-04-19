@@ -250,11 +250,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
+// Update your _speakResponse method to ensure proper handling of TTS completion
   Future<void> _speakResponse(String text) async {
     try {
       // Stop any ongoing speech first
       if (_isSpeaking) {
+        print("Stopping previous speech before speaking new text");
         await _flutterTts.stop();
+        await Future.delayed(
+            const Duration(milliseconds: 300)); // Small delay after stopping
       }
 
       // Set speaking state
@@ -262,8 +266,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _isSpeaking = true;
       });
 
-      // No need to reinitialize - just speak with the already configured instance
-      await _flutterTts.speak(text);
+      print("🔊 Speaking: '$text'");
+
+      // IMPORTANT: Do NOT await this call - otherwise completion handler won't work properly
+      _flutterTts.speak(text);
+
+      return; // Return immediately, don't wait for speak to complete
     } catch (e) {
       print('Error speaking response: $e');
       setState(() {
@@ -413,6 +421,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     try {
       print('Initializing wake word detection...');
 
+      bool isInitialized = await WakeWordService.isInitialized() ?? false;
+      if (isInitialized) {
+        print("Wake word detection already initialized");
+        return;
+      }
+
       // Set up callback for wake word detection - only set it once
       WakeWordService.onWakeWordDetected = () {
         print("🎙️ WAKE WORD DETECTED!");
@@ -454,8 +468,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   void _triggerVoiceAssistant() {
-    // This method will be called when the wake word is detected
-
     // Add visual feedback - briefly animate the mic button
     _voiceButtonAnimController.forward().then((_) {
       _voiceButtonAnimController.reverse();
@@ -709,21 +721,21 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // Cancel any existing timer to prevent duplicates
     _requestTimer?.cancel();
     _requestTimer = null;
-    
+
     // Reset timer values
     _remainingSeconds = 15;
-    
+
     // Stop any ongoing animations and reset them
     _timerGlowController.reset();
     _timerShakeController.reset();
-    
+
     // Create a new periodic timer
     _requestTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
       }
-      
+
       setState(() {
         if (_remainingSeconds > 0) {
           _remainingSeconds--;
@@ -763,13 +775,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // Reset animation controller to ensure it starts from scratch
       _requestCardController.reset();
-      
+
       // Animate the request card sliding up
       _requestCardController.forward(from: 0.0);
-      
+
       // Reset timer values
       _remainingSeconds = 15;
-      
+
       // Start a fresh timer
       _startRequestTimer();
     });
@@ -779,11 +791,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // Cancel any existing timer
     _requestTimer?.cancel();
     _requestTimer = null;
-    
+
     // Reset timer animations
     _timerGlowController.reset();
     _timerShakeController.reset();
-    
+
     // Make sure controller is initialized before animating
     if (!_requestCardController.isAnimating) {
       _requestCardController.reverse().then((_) {
@@ -802,7 +814,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Add this helper method to update ride request state
+// Fix the _updateRideRequestState method to prevent announcing requests when going offline
   void _updateRideRequestState(bool hasActiveRequest) {
     setState(() {
       // If going offline, there cannot be active requests
@@ -824,13 +836,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         if (hasActiveRequest) {
           // Make sure we start from a clean state
           _requestCardController.reset();
-          
+
           // Always show request card animation from the beginning
           _requestCardController.forward(from: 0.0);
-          
+
           // Ensure timer is reset and started fresh
           _remainingSeconds = 15;
           _startRequestTimer();
+
+          // NEW LINE: Only announce when going from no request to having a request while online
+          _announceNewRideRequest();
         } else {
           // Dismiss the request card if it was showing
           if (_requestCardController.value > 0) {
@@ -883,16 +898,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // Cancel any existing request timer
       _requestTimer?.cancel();
-      
+
       if (_isOnline) {
         // Reset timer values when going online to ensure fresh start
         _remainingSeconds = 15;
-        
+
         // Reset request card controller state
         if (_requestCardController.isCompleted) {
           _requestCardController.reset();
         }
-        
+
         // Going online - show request card with animation after a short delay
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted && _isOnline) {
@@ -942,7 +957,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Configure location for better accuracy
       await _location.changeSettings(
         accuracy: LocationAccuracy.high,
-        interval: 1000,
+        interval: 5000,
         distanceFilter: 5,
       );
 
@@ -1184,55 +1199,73 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _handleLocationPermission() async {
-    bool serviceEnabled;
-    PermissionStatus permissionGranted;
-
-    serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) {
-        return;
-      }
-    }
-
-    permissionGranted = await _location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await _location.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) {
-        return;
-      }
-    }
-    await _location.changeSettings(
-      accuracy: LocationAccuracy
-          .high, // Use high accuracy instead of PRIORITY_HIGH_ACCURACY
-      interval: 10000, // Update interval in milliseconds
-      distanceFilter: 5, // Minimum distance in meters to trigger updates
-    );
     try {
-      _currentPosition = await _location.getLocation();
-      print(
-          'Current position: ${_currentPosition?.latitude}, ${_currentPosition?.longitude}');
+      // Check if permission is already granted
+      var permissionStatus = await _location.hasPermission();
+      print("📍 Initial location permission status: $permissionStatus");
 
-      // Try to get the country name
-      if (_currentPosition != null) {
-        try {
-          final placemarks = await geocoding.placemarkFromCoordinates(
-            _currentPosition!.latitude!,
-            _currentPosition!.longitude!,
-          );
-
-          if (placemarks.isNotEmpty) {
-            setState(() {
-              _country = placemarks.first.country ?? "Unknown";
-              print('Country detected: $_country');
-            });
-          }
-        } catch (e) {
-          print('Error getting country: $e');
+      // Request permission if needed
+      if (permissionStatus == PermissionStatus.denied) {
+        permissionStatus = await _location.requestPermission();
+        print("📍 After request, permission status: $permissionStatus");
+        if (permissionStatus != PermissionStatus.granted) {
+          print("❌ Location permission denied by user");
+          return;
         }
       }
+
+      // Check if service is enabled
+      bool serviceEnabled = await _location.serviceEnabled();
+      print("📍 Location service enabled: $serviceEnabled");
+      if (!serviceEnabled) {
+        serviceEnabled = await _location.requestService();
+        print("📍 After request, service enabled: $serviceEnabled");
+        if (!serviceEnabled) {
+          print("❌ Location service not enabled by user");
+          return;
+        }
+      }
+
+      // Configure location settings
+      await _location.changeSettings(
+        accuracy: LocationAccuracy.high,
+        interval: 5000,
+        distanceFilter: 5,
+      );
+
+      // Get location with extended timeout and retry
+      try {
+        print("📍 Requesting location with extended timeout...");
+        _currentPosition = await _location.getLocation().timeout(
+          const Duration(seconds: 15), // Increased timeout
+          onTimeout: () {
+            print("⚠️ Location request timed out - using default");
+            return LocationData.fromMap({
+              "latitude": 3.1390,
+              "longitude": 101.6869,
+              "accuracy": 0.0,
+              "altitude": 0.0,
+              "speed": 0.0,
+              "speed_accuracy": 0.0,
+              "heading": 0.0,
+            });
+          },
+        );
+
+        print(
+            "📍 Location obtained: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
+
+        // Update UI with location
+        if (mounted) {
+          setState(() {
+            _updateDriverLocationMarker();
+          });
+        }
+      } catch (e) {
+        print("❌ Error getting location: $e");
+      }
     } catch (e) {
-      print('Error getting location: $e');
+      print("❌ Error in location permission handling: $e");
     }
   }
 
@@ -1287,9 +1320,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
-// Add this flag to track if we should update camera on location changes
-  bool _cameraLocked = false;
-
 // Update this method to ensure marker is visible
   void _updateDriverLocationMarker() {
     if (_currentPosition == null) return;
@@ -1304,7 +1334,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     final updatedMarker = Marker(
       markerId: const MarkerId('driver_location'),
       position: driverPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
       infoWindow: const InfoWindow(title: 'Your Location'),
       zIndex: 2,
     );
@@ -1320,12 +1350,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       print("Driver marker updated (total markers: ${_markers.length})");
     });
-  }
-
-// Add this method to lock/unlock camera position
-  void _lockCameraPosition(bool lock) {
-    _cameraLocked = lock;
-    print("Camera position ${lock ? 'locked' : 'unlocked'}");
   }
 
   void _centerMapOnDriverPosition() {
@@ -1570,6 +1594,299 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         ),
       ),
     );
+  }
+
+  void _clearTtsCompletionHandler() {
+    print("Clearing previous TTS completion handlers");
+    _flutterTts.setCompletionHandler(() {
+      print("Empty handler triggered (should not see this)");
+    });
+  }
+
+// Replace your announceNewRideRequest method with this implementation
+  void _announceNewRideRequest() {
+    // Don't announce if user is already recording something
+    if (_isRecording || _isProcessing) return;
+
+    print("🔊 Announcing new ride request");
+
+    // First stop any ongoing speech
+    _stopSpeaking();
+
+    // Setup a proper duration-based timing system rather than relying on TTS callback
+    setState(() {
+      _isSpeaking = true;
+    });
+
+    // Start with clear speech
+    print("Speaking ride request announcement");
+    _flutterTts.speak("There's a new ride request. Would you like to accept?");
+
+    // Instead of relying on completion callback, calculate approximate duration
+    // Average speaking rate is ~150 words per minute = 2.5 words per second
+    // Our message is ~10 words, so around 4 seconds plus a small buffer
+    final speechDuration = const Duration(milliseconds: 2700);
+
+    // Schedule voice listener to start after the speech should complete
+    Future.delayed(speechDuration, () {
+      print("Speech duration elapsed - starting voice response listener");
+      if (mounted) {
+        setState(() {
+          _isSpeaking = false;
+        });
+
+        // Start listening after a short pause to ensure TTS is done
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            print("Starting voice response listener now");
+            _startVoiceResponseListener();
+          }
+        });
+      }
+    });
+  }
+
+// Add this method to start voice recording specifically for ride responses
+  Future<void> _startVoiceResponseListener() async {
+    try {
+      print('\n=== Listening for ride acceptance ===');
+
+      // Cancel any existing timers first
+      _amplitudeTimer?.cancel();
+      _amplitudeTimer = null;
+
+      if (!await _recorder.hasPermission()) {
+        throw Exception('Microphone permission denied');
+      }
+
+      final path = await _getTempFilePath();
+      print('Recording path for ride response: $path');
+
+      // Start recording with optimized settings
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          bitRate: 768000,
+          sampleRate: 48000,
+          numChannels: 2,
+        ),
+        path: path,
+      );
+
+      print('Ride response listening started');
+
+      // Set recording state variables - but don't show UI feedback
+      _isRecording = true;
+      _hasDetectedSpeech = false;
+      _silenceCount = 0;
+      _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
+      _lastAmplitude = -30.0;
+      _currentAmplitude = -30.0;
+
+      print("Starting amplitude monitoring for ride response...");
+      _startRideResponseAmplitudeMonitoring();
+    } catch (e) {
+      print('Error in _startVoiceResponseListener: $e');
+      _isRecording = false;
+    }
+  }
+
+// Add a specialized amplitude monitoring method for ride responses
+  void _startRideResponseAmplitudeMonitoring() {
+    // Ensure we don't have multiple timers
+    _amplitudeTimer?.cancel();
+
+    int readingsToSkip = 2;
+    _amplitudeTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+      if (!_isRecording) {
+        print("Recording stopped, cancelling amplitude timer");
+        timer.cancel();
+        return;
+      }
+
+      try {
+        final amplitude = await _recorder.getAmplitude();
+        double newAmplitude = amplitude.current;
+
+        // Skip invalid amplitude values
+        if (newAmplitude.isInfinite || newAmplitude.isNaN) {
+          print('⚠️ Skipping invalid amplitude value');
+          return;
+        }
+
+        _currentAmplitude = newAmplitude;
+
+        // Handle initial readings
+        if (readingsToSkip > 0) {
+          _lastAmplitude = _currentAmplitude;
+          readingsToSkip--;
+          return;
+        }
+
+        // Amplitude analysis
+        double percentageChange = 0.0;
+        if (_lastAmplitude.abs() > 0.001 && !_lastAmplitude.isInfinite) {
+          percentageChange =
+              ((_currentAmplitude - _lastAmplitude) / _lastAmplitude.abs()) *
+                  100;
+          percentageChange = percentageChange.clamp(-1000.0, 1000.0);
+
+          // Speech detection
+          if (percentageChange.abs() > AMPLITUDE_CHANGE_THRESHOLD) {
+            if (!_hasDetectedSpeech) {
+              print('Speech detected in ride response');
+              _hasDetectedSpeech = true;
+              _silenceDuration = POST_SPEECH_SILENCE_COUNT;
+            }
+            _silenceCount = 0;
+          }
+          // Silence detection
+          else if (_currentAmplitude < SILENCE_THRESHOLD) {
+            _silenceCount++;
+            if (_silenceCount >= _silenceDuration) {
+              print('Recording stopped - Silence duration reached');
+              timer.cancel();
+              _stopRideResponseRecordingAndProcess();
+            }
+          } else {
+            _silenceCount = 0;
+          }
+
+          _lastAmplitude = _currentAmplitude;
+        }
+      } catch (e) {
+        print('❌ Error in amplitude monitoring: $e');
+      }
+    });
+  }
+
+// Add method to stop recording and process the ride response
+  Future<void> _stopRideResponseRecordingAndProcess() async {
+    try {
+      final path = await _recorder.stop();
+      _isRecording = false;
+      _isProcessing = true;
+
+      if (path == null) {
+        throw Exception('Recording stopped but no file path returned');
+      }
+
+      final file = File(path);
+      if (!await file.exists()) {
+        throw Exception('Recording file not found at: $path');
+      }
+
+      // This is a simplified transcription for ride requests
+      // For faster response, we'll process locally
+      // Upload audio with specific ride acceptance context
+      await audioProcessingService.uploadAudio(
+        file,
+        conversationContext:
+            "The user is responding to a ride request. They must say yes, accept, no, or decline.",
+      );
+
+      // Set up a callback to handle the ride response
+      audioProcessingService.onTranscriptionComplete =
+          (String baseText, String fineTunedText, String geminiResponse) {
+        _processRideResponseTranscription(fineTunedText.toLowerCase());
+      };
+    } catch (e) {
+      print('Error in _stopRideResponseRecordingAndProcess: $e');
+      _isProcessing = false;
+    }
+  }
+
+// Add method to process the transcription for ride responses
+  void _processRideResponseTranscription(String transcription) {
+    print("Processing ride response: $transcription");
+
+    // Set processing to false
+    _isProcessing = false;
+
+    // Simple keyword matching for yes/no responses
+    final yesKeywords = [
+      'yes',
+      'yeah',
+      'yep',
+      'accept',
+      'sure',
+      'okay',
+      'ok',
+      'fine',
+      'alright'
+    ];
+    final noKeywords = [
+      'no',
+      'nope',
+      'decline',
+      'reject',
+      'don\'t',
+      'dont',
+      'not',
+      'cancel'
+    ];
+
+    // Check if transcription contains yes keywords
+    bool containsYes =
+        yesKeywords.any((keyword) => transcription.contains(keyword));
+
+    // Check if transcription contains no keywords
+    bool containsNo =
+        noKeywords.any((keyword) => transcription.contains(keyword));
+
+    if (containsYes && !containsNo) {
+      // User wants to accept the ride
+      _speakResponse("Accepting ride request").then((_) {
+        if (mounted) {
+          _acceptRideRequest();
+        }
+      });
+    } else if (containsNo) {
+      // User wants to decline the ride
+      _speakResponse("Declining ride request").then((_) {
+        if (mounted) {
+          // Dismiss the request
+          _dismissRequest();
+
+          // Show a snackbar confirming the decline
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ride declined'),
+              duration: Duration(seconds: 2),
+              backgroundColor: Colors.red,
+            ),
+          );
+
+          // Simulate new request after a delay
+          Future.delayed(const Duration(seconds: 3), () {
+            if (_isOnline && mounted) {
+              _showNewRequest();
+            }
+          });
+        }
+      });
+    }
+
+    // Reset the transcription complete callback to the default one
+    audioProcessingService.onTranscriptionComplete =
+        (String baseText, String fineTunedText, String geminiResponse) {
+      if (mounted) {
+        setState(() {
+          _geminiResponse = geminiResponse;
+          _isProcessing = false;
+          // Store this exchange in the current conversation history
+          _sessionConversationHistory
+              .add({'user': fineTunedText, 'assistant': geminiResponse});
+
+          // This is critical - update the stream to notify UI
+          _geminiStreamController.add(geminiResponse);
+        });
+
+        // Optional: Speak the response
+        _speakResponse(geminiResponse);
+      }
+    };
   }
 
   Widget _buildRequestCard() {
@@ -2995,37 +3312,40 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // Don't save this position as it's the default position
     // We only want to save positions that the user has explicitly set
   }
-void _setupLocationUpdates() {
-  try {
-    _location.onLocationChanged.listen((LocationData currentLocation) {
-      if (mounted) {
-        // Verify we got real coordinates
-        if (currentLocation.latitude != null && currentLocation.longitude != null) {
-          print("📍 REAL LOCATION UPDATE: ${currentLocation.latitude}, ${currentLocation.longitude}");
-          
-          // Check if this is the initial position (KL coordinates)
-          bool isDefaultPosition = 
-              (currentLocation.latitude! - 3.1390).abs() < 0.0001 && 
-              (currentLocation.longitude! - 101.6869).abs() < 0.0001;
-          
-          if (isDefaultPosition) {
-            print("⚠️ IGNORING default position update");
-            return; // Skip updating with default position
+
+  void _setupLocationUpdates() {
+    try {
+      _location.onLocationChanged.listen((LocationData currentLocation) {
+        if (mounted) {
+          // Verify we got real coordinates
+          if (currentLocation.latitude != null &&
+              currentLocation.longitude != null) {
+            print(
+                "📍 REAL LOCATION UPDATE: ${currentLocation.latitude}, ${currentLocation.longitude}");
+
+            // Check if this is the initial position (KL coordinates)
+            bool isDefaultPosition =
+                (currentLocation.latitude! - 3.1390).abs() < 0.0001 &&
+                    (currentLocation.longitude! - 101.6869).abs() < 0.0001;
+
+            if (isDefaultPosition) {
+              print("⚠️ IGNORING default position update");
+              return; // Skip updating with default position
+            }
+
+            setState(() {
+              _currentPosition = currentLocation;
+
+              // Update only the marker with real position
+              _updateDriverMarkerOnly();
+            });
           }
-          
-          setState(() {
-            _currentPosition = currentLocation;
-            
-            // Update only the marker with real position
-            _updateDriverMarkerOnly();
-          });
         }
-      }
-    });
-  } catch (e) {
-    print("❌ Error setting up location updates: $e");
+      });
+    } catch (e) {
+      print("❌ Error setting up location updates: $e");
+    }
   }
-}
 
   void _updateDriverMarkerOnly() {
     if (_currentPosition == null) return;
@@ -3037,7 +3357,7 @@ void _setupLocationUpdates() {
     final updatedMarker = Marker(
       markerId: const MarkerId('driver_location'),
       position: driverPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
       infoWindow: const InfoWindow(title: 'Your Location'),
       zIndex: 2,
     );
@@ -4507,4 +4827,3 @@ void _setupLocationUpdates() {
     }
   }
 }
-

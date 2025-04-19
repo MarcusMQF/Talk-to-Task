@@ -22,7 +22,7 @@ class AudioProcessingService {
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
   static const String SERVER_URL = '$BASE_URL/upload/';
-  static const String BASE_URL = 'https://843a-103-18-0-17.ngrok-free.app';
+  static const String BASE_URL = 'https://d0c9-2405-3800-896-5927-8d6-b5ab-68c8-f316.ngrok-free.app';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
@@ -45,7 +45,6 @@ class AudioProcessingService {
   Function(bool isProcessing)? onProcessingStateChanged;
   Function(String baseText, String enhancedText, String geminiResponse)?
       onTranscriptionComplete;
-
   // Constructor
   AudioProcessingService() {
     // Initialize in the background with better error handling
@@ -289,8 +288,10 @@ class AudioProcessingService {
           '📦 Audio size: ${(audioData.length / 1024).toStringAsFixed(2)} KB');
 
       final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
-      final deviceContext = await _deviceInfo.getDeviceContext(needLocation: true);
-      final country = deviceContext['location'] ?? "Malaysia"; // Default to Malaysia if location fails
+      final deviceContext =
+          await _deviceInfo.getDeviceContext(needLocation: true);
+      final country = deviceContext['location'] ??
+          "Malaysia"; // Default to Malaysia if location fails
       final stopwatch = Stopwatch()..start();
 
       // Add conversation context if provided
@@ -330,7 +331,7 @@ class AudioProcessingService {
 
       print('📤 Sending request to backend...');
       final response = await request.send().timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 10),
         onTimeout: () {
           print('❌ Backend request timed out after 20 seconds');
           throw TimeoutException('Backend request timed out');

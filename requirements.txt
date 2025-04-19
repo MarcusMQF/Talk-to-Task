@@ -19,3 +19,5 @@ deepfilternet>=0.5.4
 # Utilities
 python-dotenv>=1.0.0
 pydantic>=2.4.2
+google-generativeai>=0.1.0
+python-dotenv>=1.0.0
