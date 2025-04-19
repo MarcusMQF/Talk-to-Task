@@ -236,7 +236,7 @@ The complete system delivers end-to-end processing in under 2 seconds, ensuring 
 
 Talk To Task delivers a truly hands-free experience with capabilities that distinguish it from conventional voice assistants:
 
-### Direct Voice-to-Action Functionality
+### 🔊 Direct Voice-to-Action Functionality
 Unlike most voice assistants that merely provide information, our system enables **direct control of critical ride-hailing functions**:
 
 - **Ride Request Management**: Drivers can accept or decline incoming ride requests purely by voice ("Accept this ride" or "Decline this order")
@@ -244,7 +244,7 @@ Unlike most voice assistants that merely provide information, our system enables
 - **Navigation Control**: Change routes, find nearby amenities, or adjust map views using natural speech commands ("Show me nearby gas stations" or "Zoom out the map")
 - **In-App Functionality**: Complete end-of-ride tasks, report issues, or adjust settings through conversational commands ("End the trip" or "Report a problem with the passenger")
 
-### Superior Audio Processing Technology
+### 🎧 Superior Audio Processing Technology
 Our audio processing pipeline outperforms competitors with:
 
 - **Industry-Leading Noise Reduction**: 70% noise reduction in environments reaching 80-90 dB
@@ -253,7 +253,7 @@ Our audio processing pipeline outperforms competitors with:
 - **Rapid Processing Speed**: Complete audio capture-to-response cycle in under 2 seconds
 - **Optimized Distance Recognition**: Maintains accuracy at practical in-vehicle distances (~40 cm)
 
-### Location-Intelligent Model Selection
+### 🌍 Location-Intelligent Model Selection
 The system automatically adapts to the driver's geographical context:
 
 - Detects the driver's country location
