@@ -132,7 +132,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   int _currentNavigationStep = 0;
   List<Map<String, dynamic>> _navigationSteps = [];
   Timer? _navigationUpdateTimer;
-
+  bool _hasSetInitialPosition = false;
   // Compass button visibility state
   bool _showCompassButton = false;
   double _mapBearing = 0.0;
@@ -145,7 +145,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     super.initState();
 
     _isMapLoading = true;
-    
+
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
@@ -154,7 +154,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _initializeWakeWordDetection();
     _initializeTts();
     _setupWeatherUpdates();
-
+    _getInitialLocation();
     _isMapLoading = true;
     // Add this near the start of your initState
     // Pass the initial online status to GeminiService
@@ -178,7 +178,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _isMapLoading = false;
         });
-        
+
         // Setup location updates after initialization
         _setupLocationUpdates();
       }
@@ -330,7 +330,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _weatherData = weatherData;
           _isLoadingWeather = false;
-          
+
           // Update Gemini with the latest weather information
           _updateGeminiWithWeatherContext();
         });
@@ -345,13 +345,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _waitForLocationAndFetchWeather();
     });
   }
-  
+
   // Add this method to ensure Gemini always has updated weather data
   void _updateGeminiWithWeatherContext() async {
     if (_weatherData != null) {
-      // No need to fetch device context here since the weather is already updated 
+      // No need to fetch device context here since the weather is already updated
       // in the _weatherData variable and will be included in subsequent calls to getDeviceContext
-      
+
       // Update GeminiService with current ride state
       _geminiService.updatePromptContext(
         isOnline: _isOnline,
@@ -361,13 +361,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         destination: _hasActiveRequest ? _destination : null,
         paymentMethod: _hasActiveRequest ? _paymentMethod : null,
         fareAmount: _hasActiveRequest ? _fareAmount : null,
-        driverToPickupDistance: _hasActiveRequest ? _driverToPickupDistance : null,
+        driverToPickupDistance:
+            _hasActiveRequest ? _driverToPickupDistance : null,
         pickupToDestinationDistance: _hasActiveRequest ? _tripDistance : null,
         estimatedPickupTime: _hasActiveRequest ? _estimatedPickupTime : null,
-        estimatedTripDuration: _hasActiveRequest ? _estimatedTripDuration : null,
+        estimatedTripDuration:
+            _hasActiveRequest ? _estimatedTripDuration : null,
       );
-      
-      print('Updated Gemini context with weather: ${_weatherData!['main']}, ${_weatherData!['temperature']}°C ${_weatherData!['emoji']}');
+
+      print(
+          'Updated Gemini context with weather: ${_weatherData!['main']}, ${_weatherData!['temperature']}°C ${_weatherData!['emoji']}');
     }
   }
 
@@ -399,7 +402,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           'description': 'Clear sky'
         };
         _isLoadingWeather = false;
-        
+
         // Call update method even with default weather
         _updateGeminiWithWeatherContext();
       });
@@ -606,7 +609,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     setState(() {
       _voiceButtonPosition = Offset(targetX, safeY);
     });
-    
+
     // Save the new position to SharedPreferences
     _saveVoiceButtonPosition();
   }
@@ -859,96 +862,64 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
+// Replace your _initializeLocation method with this:
   Future<void> _initializeLocation() async {
     try {
-      print("Starting location initialization...");
+      print("🔍 INIT LOCATION: Starting location initialization...");
 
-      // First check if service is enabled
+      // Check permission once
+      var permissionStatus = await _location.hasPermission();
+      if (permissionStatus == PermissionStatus.denied) {
+        print("Requesting location permission");
+        permissionStatus = await _location.requestPermission();
+      }
+
+      // Check service availability once
       bool serviceEnabled = await _location.serviceEnabled();
       if (!serviceEnabled) {
-        print("Location service disabled");
-        // Use default location without waiting for service request
-        _currentPosition = LocationData.fromMap({
-          "latitude": 3.1390,
-          "longitude": 101.6869,
-          "accuracy": 0.0,
-          "altitude": 0.0,
-          "speed": 0.0,
-          "speed_accuracy": 0.0,
-          "heading": 0.0,
-        });
-        // Update driver marker with default location
-        _updateDriverLocationMarker();
+        print("Requesting location service");
+        serviceEnabled = await _location.requestService();
+      }
+
+      if (permissionStatus != PermissionStatus.granted || !serviceEnabled) {
+        print("⚠️ Location permissions or service unavailable");
         return;
       }
 
-      // Check permission
-      var permissionStatus = await _location.hasPermission();
-      if (permissionStatus == PermissionStatus.denied ||
-          permissionStatus == PermissionStatus.deniedForever) {
-        print("Location permission denied");
-        // Use default location without waiting for permission request
-        _currentPosition = LocationData.fromMap({
-          "latitude": 3.1390,
-          "longitude": 101.6869,
-          "accuracy": 0.0,
-          "altitude": 0.0,
-          "speed": 0.0,
-          "speed_accuracy": 0.0,
-          "heading": 0.0,
-        });
-        // Update driver marker with default location
-        _updateDriverLocationMarker();
-        return;
-      }
-
-      // Configure location settings
+      // Configure location for better accuracy
       await _location.changeSettings(
-        accuracy: LocationAccuracy.balanced,
-        interval: 10000,
-        distanceFilter: 10,
+        accuracy: LocationAccuracy.high,
+        interval: 1000,
+        distanceFilter: 5,
       );
 
-      // Get current location with shorter timeout
-      _currentPosition = await _location.getLocation().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () {
-          print("Location timeout - using default location");
-          return LocationData.fromMap({
-            "latitude": 3.1390,
-            "longitude": 101.6869,
-            "accuracy": 0.0,
-            "altitude": 0.0,
-            "speed": 0.0,
-            "speed_accuracy": 0.0,
-            "heading": 0.0,
+      // IMPORTANT: Don't use timeout - just wait for actual location
+      try {
+        print("📱 Requesting REAL user location...");
+        _currentPosition = await _location.getLocation();
+        print(
+            "✅ GOT REAL LOCATION: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
+
+        // Update UI
+        if (mounted) {
+          setState(() {
+            // Update driver marker with REAL position
+            _updateDriverLocationMarker();
           });
-        },
-      );
 
-      // Update driver marker with current location
-      _updateDriverLocationMarker();
-
-      // If map controller is already initialized, center map on driver position
-      if (_mapController != null) {
-        _centerMapOnDriverPosition();
+          // Center map on REAL position
+          if (_mapController != null) {
+            _centerMapOnDriverPosition();
+          }
+        }
+      } catch (e) {
+        print("❌ Error getting REAL location: $e");
       }
-      
+
+      // Set up continuous updates with the REAL position
+      _setupLocationUpdates();
     } catch (e) {
-      print("Error initializing location: $e");
-      // Use a default location if there's an error
-      _currentPosition = LocationData.fromMap({
-        "latitude": 3.1390,
-        "longitude": 101.6869,
-        "accuracy": 0.0,
-        "altitude": 0.0,
-        "speed": 0.0,
-        "speed_accuracy": 0.0,
-        "heading": 0.0,
-      });
-      
-      // Make sure we update the driver marker even with default location
-      _updateDriverLocationMarker();
+      print("❌ Error in location initialization: $e");
     }
   }
 
@@ -1263,62 +1234,62 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Update this method to handle post-pickup navigation differently
+// Add this flag to track if we should update camera on location changes
+  bool _cameraLocked = false;
+
+// Update this method to ensure marker is visible
   void _updateDriverLocationMarker() {
-    if (_currentPosition != null) {
-      final driverPosition =
-          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+    if (_currentPosition == null) return;
 
-      // In normal mode or pickup mode, update the driver marker with current position
-      if (!_isNavigatingToDestination) {
-        // Create or update the driver marker with green pin at current location
-        final updatedMarker = Marker(
-          markerId: const MarkerId('driver_location'),
-          position: driverPosition,
-          icon:
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-          infoWindow: const InfoWindow(title: 'Your Location'),
-          zIndex: 2, // Ensure driver marker is on top of other markers
-          visible: true, // Explicitly set marker to be visible
-        );
+    final driverPosition =
+        LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-        setState(() {
-          // Remove old driver marker if it exists
-          if (_driverLocationMarker != null) {
-            _markers.remove(_driverLocationMarker);
-          }
+    print(
+        "Updating driver marker to: ${driverPosition.latitude}, ${driverPosition.longitude}");
 
-          // Add new driver marker
-          _driverLocationMarker = updatedMarker;
-          _markers.add(_driverLocationMarker!);
+    // Use a distinctive marker
+    final updatedMarker = Marker(
+      markerId: const MarkerId('driver_location'),
+      position: driverPosition,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      infoWindow: const InfoWindow(title: 'Your Location'),
+      zIndex: 2,
+    );
 
-          // If we're navigating to pickup location
-          if (_isNavigatingToPickup) {
-            // Make sure pickup marker is visible
-            if (_pickupLocationMarker != null &&
-                !_markers.contains(_pickupLocationMarker)) {
-              _markers.add(_pickupLocationMarker!);
-            }
+    setState(() {
+      // Remove old driver marker if it exists
+      _markers
+          .removeWhere((marker) => marker.markerId.value == 'driver_location');
 
-            // Update route from current position to pickup if needed
-            // Only update if driver has moved significantly
-            if (_polylines.isNotEmpty &&
-                _calculateDistance(
-                        driverPosition, _polylines.first.points.first) >
-                    0.05) {
-              _polylines.clear();
-              final pickupPosition = _pickupLocationMarker != null
-                  ? _pickupLocationMarker!.position
-                  : const LatLng(3.0733, 101.6073);
-              _createRouteLinePoints(driverPosition, pickupPosition,
-                  AppTheme.grabGreen, 'route_to_pickup');
-            }
-          }
-        });
-      }
-      // When navigating to destination, we don't update anything
-      // This preserves the route from pickup to destination
-    }
+      // Add the new marker
+      _driverLocationMarker = updatedMarker;
+      _markers.add(_driverLocationMarker!);
+
+      print("Driver marker updated (total markers: ${_markers.length})");
+    });
+  }
+
+// Add this method to lock/unlock camera position
+  void _lockCameraPosition(bool lock) {
+    _cameraLocked = lock;
+    print("Camera position ${lock ? 'locked' : 'unlocked'}");
+  }
+
+  void _centerMapOnDriverPosition() {
+    if (_mapController == null || _currentPosition == null) return;
+
+    final driverPosition =
+        LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
+    _mapController!.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: driverPosition,
+          zoom: 16.0,
+          bearing: 0.0,
+        ),
+      ),
+    );
   }
 
   // Helper method to get flag asset based on country
@@ -1839,15 +1810,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                                 icon: Icons.directions,
                                 label: 'Directions',
                                 onTap: () {
-                                  if (_mapController != null) {
+                                  if (_mapController != null &&
+                                      _currentPosition != null) {
+                                    final driverPosition = LatLng(
+                                        _currentPosition!.latitude!,
+                                        _currentPosition!.longitude!);
                                     _mapController!.animateCamera(
-                                      CameraUpdate.newCameraPosition(
-                                        const CameraPosition(
-                                          target: _initialPosition,
-                                          zoom: 16,
-                                          tilt: 45,
-                                        ),
-                                      ),
+                                      CameraUpdate.newLatLng(driverPosition),
                                     );
                                   }
                                 },
@@ -2306,25 +2275,45 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   zoom: 15,
                 ),
                 onMapCreated: (GoogleMapController controller) {
-                  _mapController = controller;
+                  setState(() {
+                    _mapController = controller;
+                  });
 
                   // Apply theme-based map style
                   controller.setMapStyle(themeProvider.isDarkMode
                       ? MapStyles.dark
                       : MapStyles.light);
 
-                  // If we already have location by this point, center map on it
-                  if (_currentPosition != null) {
-                    // Slight delay to ensure the map is fully loaded first
-                    Future.delayed(const Duration(milliseconds: 500), () {
-                      _centerMapOnDriverPosition();
+                  print("Map controller created");
+                  if (_currentPosition != null && !_hasSetInitialPosition) {
+                    _hasSetInitialPosition = true;
+
+                    // This slight delay ensures the map is fully rendered before moving
+                    Future.delayed(const Duration(milliseconds: 1), () {
+                      if (mounted &&
+                          _mapController != null &&
+                          _currentPosition != null) {
+                        final driverPosition = LatLng(
+                            _currentPosition!.latitude!,
+                            _currentPosition!.longitude!);
+
+                        print(
+                            "Setting initial camera position to driver: ${driverPosition.latitude}, ${driverPosition.longitude}");
+
+                        // First update marker
+                        _updateDriverLocationMarker();
+
+                        // Then center camera with explicit position
+                        controller.animateCamera(CameraUpdate.newCameraPosition(
+                          CameraPosition(
+                            target: driverPosition,
+                            zoom: 16.0,
+                            bearing: 0.0,
+                          ),
+                        ));
+                      }
                     });
                   }
-                  
-                  // Set map initialized flag
-                  setState(() {
-                    _mapInitialized = true;
-                  });
                 },
                 onCameraMove: (CameraPosition position) {
                   // Show compass button when map is rotated
@@ -2833,13 +2822,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              
+
               // Speak decline confirmation
               _speakResponse("Ride declined.");
-              
+
               // Dismiss the request
               _dismissRequest();
-              
+
               // Show a red snackbar confirming the decline
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -2848,7 +2837,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                   backgroundColor: Colors.red,
                 ),
               );
-              
+
               // Simulate new request after a delay
               Future.delayed(const Duration(seconds: 3), () {
                 if (_isOnline && mounted) {
@@ -2949,29 +2938,64 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           screenHeight - 180.0 // Bottom edge - button height - some padding
           );
     });
-    
+
     // Don't save this position as it's the default position
     // We only want to save positions that the user has explicitly set
   }
-
-  void _setupLocationUpdates() {
-    // Add error handling for location updates
-    try {
-      _location.onLocationChanged.listen((LocationData currentLocation) {
-        if (mounted) {
+void _setupLocationUpdates() {
+  try {
+    _location.onLocationChanged.listen((LocationData currentLocation) {
+      if (mounted) {
+        // Verify we got real coordinates
+        if (currentLocation.latitude != null && currentLocation.longitude != null) {
+          print("📍 REAL LOCATION UPDATE: ${currentLocation.latitude}, ${currentLocation.longitude}");
+          
+          // Check if this is the initial position (KL coordinates)
+          bool isDefaultPosition = 
+              (currentLocation.latitude! - 3.1390).abs() < 0.0001 && 
+              (currentLocation.longitude! - 101.6869).abs() < 0.0001;
+          
+          if (isDefaultPosition) {
+            print("⚠️ IGNORING default position update");
+            return; // Skip updating with default position
+          }
+          
           setState(() {
             _currentPosition = currentLocation;
+            
+            // Update only the marker with real position
+            _updateDriverMarkerOnly();
           });
-
-          // Update driver marker
-          _updateDriverLocationMarker();
         }
-      }, onError: (e) {
-        print("Location update error: $e");
-      });
-    } catch (e) {
-      print("Error setting up location updates: $e");
-    }
+      }
+    });
+  } catch (e) {
+    print("❌ Error setting up location updates: $e");
+  }
+}
+
+  void _updateDriverMarkerOnly() {
+    if (_currentPosition == null) return;
+
+    final driverPosition =
+        LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
+    // Create updated marker
+    final updatedMarker = Marker(
+      markerId: const MarkerId('driver_location'),
+      position: driverPosition,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      infoWindow: const InfoWindow(title: 'Your Location'),
+      zIndex: 2,
+    );
+
+    // Only update the marker position without moving the camera
+    setState(() {
+      _markers
+          .removeWhere((marker) => marker.markerId.value == 'driver_location');
+      _driverLocationMarker = updatedMarker;
+      _markers.add(_driverLocationMarker!);
+    });
   }
 
 // Helper method to calculate distance between two points
@@ -4205,47 +4229,23 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     await _flutterTts.speak(speechText);
   }
 
-  // Updated method to move to current location and update weather
   void _moveToCurrentLocation() async {
     if (_mapController != null && _currentPosition != null) {
-      // Get the current zoom level to maintain it
-      final double currentZoom = await _mapController!.getZoomLevel();
-      
-      // Use driver's actual position from current location
       final driverPosition =
           LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-      // If there's an active request/order, adjust the target position slightly upward
-      // but maintain the current zoom level
-      if (_hasActiveRequest) {
-        final adjustedPosition = LatLng(
-            driverPosition.latitude - 0.005, // Move up by 0.005 on the map
-            driverPosition.longitude);
+      print(
+          "🎯 Explicitly moving to user location: ${driverPosition.latitude}, ${driverPosition.longitude}");
 
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: adjustedPosition,
-              zoom: currentZoom, // Use current zoom level instead of hardcoded value
-              bearing: _mapBearing, // Preserve current rotation
-            ),
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: driverPosition,
+            zoom: 16.0,
+            bearing: 0.0,
           ),
-        );
-      } else {
-        // Center on driver's location normally while maintaining zoom
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: driverPosition,
-              zoom: currentZoom, // Use current zoom level instead of hardcoded value
-              bearing: _mapBearing, // Preserve current rotation
-            ),
-          ),
-        );
-      }
-
-      // Update weather data for current location
-      _fetchWeatherData();
+        ),
+      );
     }
   }
 
@@ -4310,9 +4310,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Future<void> _resetMapBearing() async {
     if (_mapController != null) {
       // Convert LocationData to LatLng or use initial position
-      final LatLng targetPosition = _currentPosition != null
-          ? LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!)
-          : _initialPosition;
+      final LatLng targetPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
       final double currentZoom = await _mapController!.getZoomLevel();
 
@@ -4329,6 +4328,44 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _showCompassButton = false;
         _mapBearing = 0.0;
       });
+    }
+  }
+
+  Future<void> _getInitialLocation() async {
+    try {
+      print("Getting initial location...");
+
+      // Get location with a short timeout
+      _currentPosition = await _location.getLocation().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          print("Location timeout, using default");
+          return LocationData.fromMap({
+            "latitude": 3.1390,
+            "longitude": 101.6869,
+            "accuracy": 0.0,
+            "altitude": 0.0,
+            "speed": 0.0,
+            "speed_accuracy": 0.0,
+            "heading": 0.0,
+          });
+        },
+      );
+
+      // Update state to trigger a rebuild
+      if (mounted) {
+        setState(() {
+          print(
+              "Initial location set: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
+        });
+
+        // If map is already initialized, center it
+        if (_mapController != null) {
+          _centerMapOnDriverPosition();
+        }
+      }
+    } catch (e) {
+      print("Error getting initial location: $e");
     }
   }
 
@@ -4376,31 +4413,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
-  // New method to centralize the map focusing logic
-  void _centerMapOnDriverPosition() {
-    if (_mapController == null || _currentPosition == null) return;
-
-    final driverPosition =
-        LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-
-    // Use newCameraPosition instead of just newLatLng to keep consistent zoom level
-    _mapController!.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: driverPosition,
-          zoom: 16.0, // Better initial zoom level
-          bearing: 0.0,
-          tilt: 0.0,
-        ),
-      ),
-    );
-    
-    // Ensure marker is visible after centering
-    if (_driverLocationMarker == null) {
-      _updateDriverLocationMarker();
-    }
-  }
-
   // Method to save voice button position to SharedPreferences
   Future<void> _saveVoiceButtonPosition() async {
     try {
@@ -4419,15 +4431,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       final prefs = await SharedPreferences.getInstance();
       final double? x = prefs.getDouble('voice_button_x');
       final double? y = prefs.getDouble('voice_button_y');
-      
+
       if (x != null && y != null) {
         // Ensure the position is within screen bounds
         final screenWidth = MediaQuery.of(context).size.width;
         final screenHeight = MediaQuery.of(context).size.height;
-        
+
         final double safeX = x.clamp(20.0, screenWidth - 84.0);
         final double safeY = y.clamp(120.0, screenHeight - 100.0);
-        
+
         setState(() {
           _voiceButtonPosition = Offset(safeX, safeY);
         });
