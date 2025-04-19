@@ -142,7 +142,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-
+    
     _initializeLocation();
     _setupMarkers();
     _setupAnimations();
@@ -797,6 +797,66 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
+  // Add this helper method to update ride request state
+  void _updateRideRequestState(bool hasActiveRequest) {
+    setState(() {
+      // If going offline, there cannot be active requests
+      if (!_isOnline) {
+        _hasActiveRequest = false;
+        if (hasActiveRequest) {
+          // If there was an active request, dismiss it
+          _dismissRequest();
+          _requestTimer?.cancel();
+        }
+      } else {
+        // If online, we can set the active request as requested
+        _hasActiveRequest = hasActiveRequest;
+        
+        // Update UI based on new request state
+        if (hasActiveRequest) {
+          // Only show request card animation if it wasn't already shown
+          if (!_requestCardController.isCompleted) {
+            _requestCardController.forward(from: 0.0);
+            _startRequestTimer();
+          }
+        } else {
+          // Dismiss the request card if it was showing
+          if (_requestCardController.value > 0) {
+            _dismissRequest();
+          }
+        }
+      }
+      
+      // Always update Gemini context to match current state
+      if (_isOnline && hasActiveRequest) {
+        // When there's an active request, include detailed ride information
+        // These values would normally come from your backend/API
+        audioProcessingService.updateGeminiPromptContext(
+          isOnline: _isOnline,
+          hasActiveRequest: _hasActiveRequest,
+          pickupLocation: "Sunway Pyramid Mall, Subang Jaya",
+          pickupDetail: "Main entrance near Starbucks",
+          destination: "KL Sentral, Kuala Lumpur",
+          fareAmount: "RM 25.50",
+          paymentMethod: "Cash",
+          // Separate distances for driver-to-pickup and pickup-to-destination
+          driverToPickupDistance: "3.7 km", 
+          pickupToDestinationDistance: "15.2 km",
+          // Separate time estimates for pickup and trip duration
+          estimatedPickupTime: "5 minutes",
+          estimatedTripDuration: "25 minutes"
+        );
+      } else {
+        // Just update the basic status when offline or no active request
+        audioProcessingService.updateGeminiPromptContext(
+          isOnline: _isOnline,
+          hasActiveRequest: _hasActiveRequest,
+        );
+      }
+    });
+  }
+  
+  // Update _toggleOnlineStatus method to use the helper method
   void _toggleOnlineStatus() {
     // Always update the online state immediately for smooth toggle animation
     setState(() {
@@ -811,16 +871,22 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       );
 
       if (_isOnline) {
-        // Going online - show request card with animation
-        _showNewRequest();
+        // Going online - show request card with animation after a short delay
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted && _isOnline) {
+            _updateRideRequestState(true);
+          }
+        });
       } else {
-        // Going offline - but keep request card visible for animation
-        if (_hasActiveRequest) {
-          // Keep _hasActiveRequest true until animation completes
-          _dismissRequest();
-          _requestTimer?.cancel();
-        }
+        // Going offline - cancel any active requests
+        _updateRideRequestState(false);
       }
+      
+      // Update the Gemini prompt context with current online status
+      audioProcessingService.updateGeminiPromptContext(
+        isOnline: _isOnline,
+        hasActiveRequest: _hasActiveRequest,
+      );
     });
   }
 
