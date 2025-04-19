@@ -21,7 +21,7 @@ class AudioProcessingService {
   static const int PRE_SPEECH_SILENCE_COUNT = 100;
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
-  static const String SERVER_URL = 'http://10.171.64.167:8000/upload/';
+  static const String SERVER_URL = 'http://10.168.107.195:8000/upload/';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
