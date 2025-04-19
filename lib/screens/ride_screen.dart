@@ -88,8 +88,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Voice Recognition Module
   // CHANGE YOUR LOCAL IPV4 ADDRESS HERE!!
-  static const String SERVER_URL = 'http://10.167.65.61:8000/transcribe/';
-  static const String DENOISE_URL = 'http://10.167.65.61:8000/denoise/';
+  static const String SERVER_URL = 'http://10.168.107.195:8000/transcribe/';
+  static const String DENOISE_URL = 'http://10.168.107.195:8000/denoise/';
 
   final AudioRecorder _recorder = AudioRecorder();
   final GeminiService _geminiService = GeminiService();
@@ -2370,7 +2370,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(
+                        const CircularProgressIndicator(
                           valueColor: AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
                         ),
                         const SizedBox(height: 16),
