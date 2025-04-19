@@ -3529,48 +3529,132 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       final LatLng destinationPosition =
           LatLng(3.1348, 101.6867); // Actual KL Sentral coordinates
 
-      // Calculate distances using the Haversine formula
-      final double driverToPickupDistance =
-          _calculateDistance(driverPosition, pickupPosition);
-      final double pickupToDestinationDistance =
-          _calculateDistance(pickupPosition, destinationPosition);
+      // Get API key from environment variables
+      final apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
 
-      // Update the UI with accurate information
-      setState(() {
-        _driverToPickupDistance =
-            "${driverToPickupDistance.toStringAsFixed(1)} km";
-        _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
+      // First API call: Driver to pickup
+      final String driverToPickupUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
+          'origin=${driverPosition.latitude},${driverPosition.longitude}'
+          '&destination=${pickupPosition.latitude},${pickupPosition.longitude}'
+          '&mode=driving'
+          '&key=$apiKey';
 
-        // Estimate pickup time based on average speed of 40 km/h
-        final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
-        _estimatedPickupTime = "$pickupMinutes min";
+      // Second API call: Pickup to destination
+      final String pickupToDestinationUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
+          'origin=${pickupPosition.latitude},${pickupPosition.longitude}'
+          '&destination=${destinationPosition.latitude},${destinationPosition.longitude}'
+          '&mode=driving'
+          '&key=$apiKey';
 
-        // Estimate trip duration based on average speed of 35 km/h (accounting for traffic)
-        final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
-        _estimatedTripDuration = "$tripMinutes min";
+      // Make both API calls in parallel
+      final driverToPickupResponse = http.get(Uri.parse(driverToPickupUrl));
+      final pickupToDestinationResponse = http.get(Uri.parse(pickupToDestinationUrl));
 
-        _isDirectionsLoading = false;
-      });
+      // Wait for both responses
+      final responses = await Future.wait([driverToPickupResponse, pickupToDestinationResponse]);
+      
+      final driverToPickupData = json.decode(responses[0].body);
+      final pickupToDestinationData = json.decode(responses[1].body);
 
-      // Only show route on map if we're not already in destination navigation mode
-      // This prevents redrawing the route after pickup
-      if (!(_isNavigatingToDestination && _hasPickedUpPassenger)) {
-        // Show route on map - using different methods based on phase
-        if (_isNavigatingToPickup) {
-          // During pickup phase, we can use the specialized method for pickup route
-          _showRouteToPickup();
-        } else if (!_isNavigationMode) {
-          // For full route display with all markers, but only if not in navigation mode
-          _setupRouteDisplay(
-              driverPosition, pickupPosition, destinationPosition);
+      // Check if both requests were successful
+      if (responses[0].statusCode == 200 && 
+          responses[1].statusCode == 200 &&
+          driverToPickupData['status'] == 'OK' &&
+          pickupToDestinationData['status'] == 'OK') {
+        
+        // Extract data from first route (driver to pickup)
+        final driverToPickupRoutes = driverToPickupData['routes'] as List;
+        
+        // Extract data from second route (pickup to destination)
+        final pickupToDestinationRoutes = pickupToDestinationData['routes'] as List;
+
+        if (driverToPickupRoutes.isNotEmpty && pickupToDestinationRoutes.isNotEmpty) {
+          // Get distance and duration from driver to pickup
+          final driverToPickupLeg = driverToPickupRoutes[0]['legs'][0];
+          final String driverToPickupDistance = driverToPickupLeg['distance']['text'];
+          final String pickupETA = driverToPickupLeg['duration']['text'];
+          
+          // Get distance and duration from pickup to destination
+          final pickupToDestinationLeg = pickupToDestinationRoutes[0]['legs'][0];
+          final String pickupToDestinationDistance = pickupToDestinationLeg['distance']['text'];
+          final String tripDuration = pickupToDestinationLeg['duration']['text'];
+
+          // Update the UI with accurate information from Google Maps API
+          setState(() {
+            _driverToPickupDistance = driverToPickupDistance;
+            _tripDistance = pickupToDestinationDistance;
+            _estimatedPickupTime = pickupETA;
+            _estimatedTripDuration = tripDuration;
+            _isDirectionsLoading = false;
+          });
+
+          // Only show route on map if we're not already in destination navigation mode
+          // This prevents redrawing the route after pickup
+          if (!(_isNavigatingToDestination && _hasPickedUpPassenger)) {
+            // Show route on map - using different methods based on phase
+            if (_isNavigatingToPickup) {
+              // During pickup phase, we can use the specialized method for pickup route
+              _showRouteToPickup();
+            } else if (!_isNavigationMode) {
+              // For full route display with all markers, but only if not in navigation mode
+              _setupRouteDisplay(
+                  driverPosition, pickupPosition, destinationPosition);
+            }
+          }
+        } else {
+          // Fallback to basic calculation if no routes returned
+          _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
         }
+      } else {
+        // Fallback to basic calculation if API calls fail
+        print('Directions API error: ${driverToPickupData['status']} / ${pickupToDestinationData['status']}');
+        _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
       }
     } catch (e) {
+      // Fallback to basic calculation on any error
+      print('Error fetching ride details: $e');
+      
+      if (_currentPosition != null) {
+        final driverPosition =
+            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+        final LatLng pickupPosition =
+            LatLng(3.0733, 101.6073);
+        final LatLng destinationPosition =
+            LatLng(3.1348, 101.6867);
+            
+        _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+      }
+      
       setState(() {
         _isDirectionsLoading = false;
       });
-      print('Error fetching ride details: $e');
     }
+  }
+
+  // Fallback method for calculating distances when API calls fail
+  void _fallbackToBasicDistanceCalculation(LatLng driverPosition, LatLng pickupPosition, LatLng destinationPosition) {
+    // Calculate distances using the Haversine formula
+    final double driverToPickupDistance =
+        _calculateDistance(driverPosition, pickupPosition);
+    final double pickupToDestinationDistance =
+        _calculateDistance(pickupPosition, destinationPosition);
+
+    // Update the UI with fallback information
+    setState(() {
+      _driverToPickupDistance =
+          "${driverToPickupDistance.toStringAsFixed(1)} km";
+      _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
+
+      // Estimate pickup time based on average speed of 40 km/h
+      final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
+      _estimatedPickupTime = "$pickupMinutes min";
+
+      // Estimate trip duration based on average speed of 35 km/h (accounting for traffic)
+      final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
+      _estimatedTripDuration = "$tripMinutes min";
+
+      _isDirectionsLoading = false;
+    });
   }
 
   // Add this method to draw the route between driver and pickup location
@@ -4495,4 +4579,3 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 }
-
