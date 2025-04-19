@@ -145,7 +145,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     super.initState();
 
     _isMapLoading = true;
-
+    
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
@@ -154,6 +154,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _initializeWakeWordDetection();
     _initializeTts();
     _setupWeatherUpdates();
+    
+    // Immediately trigger weather fetch to avoid loading state
+    _fetchWeatherData();
+    
     _getInitialLocation();
     _isMapLoading = true;
     // Add this near the start of your initState
@@ -178,7 +182,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _isMapLoading = false;
         });
-
+        
         // Setup location updates after initialization
         _setupLocationUpdates();
       }
@@ -1304,7 +1308,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     final updatedMarker = Marker(
       markerId: const MarkerId('driver_location'),
       position: driverPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
       infoWindow: const InfoWindow(title: 'Your Location'),
       zIndex: 2,
     );
@@ -2177,6 +2181,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             ),
           ),
 
+          // Camera lock button
+          // Removed as requested
+
           // Zoom controls in a separate container
           Container(
             decoration: BoxDecoration(
@@ -2905,7 +2912,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Method to cancel the trip and exit navigation mode
+  // Method to cancel the trip (used from the cancel dialog)
   void _cancelTrip() {
     // Speak confirmation of cancellation
     _speakResponse("Trip cancelled.");
@@ -2917,15 +2924,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _hasPickedUpPassenger = false;
       _navigationSteps.clear();
       _currentNavigationStep = 0;
+      
+      // Unlock camera when navigation ends
+      _lockCameraPosition(false);
 
       // Clear navigation route
       _polylines.clear();
-
-      // Reset markers except for driver location
-      _markers.clear();
-      if (_driverLocationMarker != null) {
-        _markers.add(_driverLocationMarker!);
-      }
     });
 
     // Focus back on device's current location
@@ -3019,6 +3023,15 @@ void _setupLocationUpdates() {
             // Update only the marker with real position
             _updateDriverMarkerOnly();
           });
+          
+          // Only update camera if not locked
+          if (!_cameraLocked && _mapController != null) {
+            final driverPosition = LatLng(
+                currentLocation.latitude!, currentLocation.longitude!);
+            _mapController!.animateCamera(
+              CameraUpdate.newLatLng(driverPosition)
+            );
+          }
         }
       }
     });
@@ -3037,7 +3050,7 @@ void _setupLocationUpdates() {
     final updatedMarker = Marker(
       markerId: const MarkerId('driver_location'),
       position: driverPosition,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
       infoWindow: const InfoWindow(title: 'Your Location'),
       zIndex: 2,
     );
@@ -3082,18 +3095,9 @@ void _setupLocationUpdates() {
         _isNavigatingToDestination = false;
         _hasPickedUpPassenger = false;
         _currentNavigationStep = 0;
-
-        _geminiService.updatePromptContext(
-          isOnline: _isOnline,
-          hasActiveRequest: false,
-          pickupLocation: _pickupLocation,
-          destination: _destination,
-          paymentMethod: _paymentMethod,
-          fareAmount: _fareAmount,
-          tripDistance: _tripDistance,
-          estimatedPickupTime: _estimatedPickupTime,
-          estimatedTripDuration: _estimatedTripDuration,
-        );
+        
+        // Lock camera when starting navigation
+        _lockCameraPosition(true);
       });
 
       // Speak confirmation of accepting the order
@@ -3483,15 +3487,12 @@ void _setupLocationUpdates() {
       _hasPickedUpPassenger = false;
       _navigationSteps.clear();
       _currentNavigationStep = 0;
+      
+      // Unlock camera when trip ends
+      _lockCameraPosition(false);
 
       // Clear navigation route
       _polylines.clear();
-
-      // Reset markers except for driver location
-      _markers.clear();
-      if (_driverLocationMarker != null) {
-        _markers.add(_driverLocationMarker!);
-      }
     });
 
     // Focus back on device's current location
@@ -4367,21 +4368,35 @@ void _setupLocationUpdates() {
 
   void _moveToCurrentLocation() async {
     if (_mapController != null && _currentPosition != null) {
-      final driverPosition =
+      // Get the current driver position
+      LatLng driverPosition =
           LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+      
+      // If there's an active request, adjust the latitude by -0.05
+      if (_hasActiveRequest) {
+        driverPosition = LatLng(
+          driverPosition.latitude - 0.005, // Shift latitude down by 0.05
+          driverPosition.longitude
+        );
+        
+        print("🎯 Request active: Shifting view south by 0.05 latitude units");
+      }
 
       print(
-          "🎯 Explicitly moving to user location: ${driverPosition.latitude}, ${driverPosition.longitude}");
+          "🎯 Moving to location: ${driverPosition.latitude}, ${driverPosition.longitude}, zoom: 16.0");
 
       _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: driverPosition,
-            zoom: 16.0,
+            zoom: 16.0, // Always use zoom level 16
             bearing: 0.0,
           ),
         ),
       );
+      
+      // Fetch weather data for the current location
+      _fetchWeatherData();
     }
   }
 
@@ -4477,20 +4492,20 @@ void _setupLocationUpdates() {
         onTimeout: () {
           print("Location timeout, using default");
           return LocationData.fromMap({
-            "latitude": 3.1390,
-            "longitude": 101.6869,
-            "accuracy": 0.0,
-            "altitude": 0.0,
-            "speed": 0.0,
-            "speed_accuracy": 0.0,
-            "heading": 0.0,
-          });
+          "latitude": 3.1390, 
+          "longitude": 101.6869,
+          "accuracy": 0.0,
+          "altitude": 0.0,
+          "speed": 0.0,
+          "speed_accuracy": 0.0,
+          "heading": 0.0,
+        });
         },
       );
-
+        
       // Update state to trigger a rebuild
-      if (mounted) {
-        setState(() {
+        if (mounted) {
+          setState(() {
           print(
               "Initial location set: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
         });
