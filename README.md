@@ -65,7 +65,7 @@ graph TD
     D[DeepFilterNet via FastAPI] --> B
     C --> E[AI Processing]
     E --> F[Output]
-    E --> H[Google Gemini API (Multi-Agent)]
+    E --> H[Google Gemini API - Multi-Agent]
     
     I[Silence Detection] --> A
     J[Active Detection - Wake Word Detection] --> A
