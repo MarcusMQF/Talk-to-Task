@@ -64,6 +64,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Initial camera position (example coordinates - should be replaced with actual pickup location)
   static const LatLng _initialPosition =
       LatLng(3.1390, 101.6869); // KL coordinates
+  bool _isInitialPrompt = true;
 
   // Markers for pickup and dropoff locations
   final Set<Marker> _markers = {};
@@ -142,7 +143,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    
+
     _initializeLocation();
     _setupMarkers();
     _setupAnimations();
@@ -197,7 +198,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
         // Optional: Speak the response
         _speakResponse(geminiResponse);
-        
       }
     };
 
@@ -280,7 +280,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    WakeWordService.dispose(); 
+    WakeWordService.dispose();
     _voiceProvider.removeCommandCallback();
 
     // Remove theme change listener
@@ -743,7 +743,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       } else {
         // If online, we can set the active request as requested
         _hasActiveRequest = hasActiveRequest;
-        
+
         // Update UI based on new request state
         if (hasActiveRequest) {
           // Only show request card animation if it wasn't already shown
@@ -758,26 +758,25 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           }
         }
       }
-      
+
       // Always update Gemini context to match current state
       if (_isOnline && hasActiveRequest) {
         // When there's an active request, include detailed ride information
         // These values would normally come from your backend/API
         audioProcessingService.updateGeminiPromptContext(
-          isOnline: _isOnline,
-          hasActiveRequest: _hasActiveRequest,
-          pickupLocation: "Sunway Pyramid Mall, Subang Jaya",
-          pickupDetail: "Main entrance near Starbucks",
-          destination: "KL Sentral, Kuala Lumpur",
-          fareAmount: "RM 25.50",
-          paymentMethod: "Cash",
-          // Separate distances for driver-to-pickup and pickup-to-destination
-          driverToPickupDistance: "3.7 km", 
-          pickupToDestinationDistance: "15.2 km",
-          // Separate time estimates for pickup and trip duration
-          estimatedPickupTime: "5 minutes",
-          estimatedTripDuration: "25 minutes"
-        );
+            isOnline: _isOnline,
+            hasActiveRequest: _hasActiveRequest,
+            pickupLocation: "Sunway Pyramid Mall, Subang Jaya",
+            pickupDetail: "Main entrance near Starbucks",
+            destination: "KL Sentral, Kuala Lumpur",
+            fareAmount: "RM 25.50",
+            paymentMethod: "Cash",
+            // Separate distances for driver-to-pickup and pickup-to-destination
+            driverToPickupDistance: "3.7 km",
+            pickupToDestinationDistance: "15.2 km",
+            // Separate time estimates for pickup and trip duration
+            estimatedPickupTime: "5 minutes",
+            estimatedTripDuration: "25 minutes");
       } else {
         // Just update the basic status when offline or no active request
         audioProcessingService.updateGeminiPromptContext(
@@ -787,7 +786,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       }
     });
   }
-  
+
   // Update _toggleOnlineStatus method to use the helper method
   void _toggleOnlineStatus() {
     // Always update the online state immediately for smooth toggle animation
@@ -813,7 +812,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         // Going offline - cancel any active requests
         _updateRideRequestState(false);
       }
-      
+
       // Update the Gemini prompt context with current online status
       audioProcessingService.updateGeminiPromptContext(
         isOnline: _isOnline,
@@ -1003,7 +1002,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       if (fileSize == 0) {
         throw Exception('Recording file is empty');
       }
-
 
       // Upload audio with context from current session
       await audioProcessingService.uploadAudio(file);
@@ -1286,7 +1284,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         final path = await _recorder.stop();
         // Delete the recorded file...
       }
-
 
       setState(() {
         _isRecording = false;
@@ -2540,12 +2537,62 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
+  Future<void> _speakInitialPrompt(String text) async {
+    try {
+      // Stop any ongoing speech first
+      if (_isSpeaking) {
+        await _flutterTts.stop();
+      }
+
+      // Set speaking state
+      setState(() {
+        _isSpeaking = true;
+      });
+
+      // Create a separate completion handler just for this prompt
+      // Important: Remove previous completion handler first
+      // await _flutterTts.setCompletionHandler(null);
+
+      print("Setting up auto-dismiss completion handler");
+      _flutterTts.setCompletionHandler(() {
+        print("TTS completion handler triggered - dismissing modal");
+        if (mounted) {
+          setState(() {
+            _isSpeaking = false;
+          });
+
+          // Add a small delay to ensure smooth dismissal
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted && Navigator.canPop(context)) {
+              Navigator.pop(context);
+              print("Modal dismissed after TTS completion");
+            }
+          });
+        }
+      });
+
+      // Speak the text
+      await _flutterTts.speak(text);
+    } catch (e) {
+      print('Error speaking initial prompt: $e');
+      setState(() {
+        _isSpeaking = false;
+      });
+    }
+  }
+
   Widget _buildVoiceModal(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
+    _isInitialPrompt = true;
     print(
         'Building voice modal: isRecording=$_isRecording, isProcessing=$_isProcessing');
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isInitialPrompt) {
+        _isInitialPrompt = false;
+        _speakInitialPrompt("I am listening");
+      }
+    });
     return StatefulBuilder(
       builder: (BuildContext context, StateSetter modalSetState) {
         // Use this to force rebuild the modal when state changes
