@@ -289,10 +289,16 @@ class AudioProcessingService {
           '📦 Audio size: ${(audioData.length / 1024).toStringAsFixed(2)} KB');
 
       final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
-      final deviceContext = await _deviceInfo.getDeviceContext();
+      final deviceContext = await _deviceInfo.getDeviceContext(needLocation: true);
       final country = deviceContext['location'] ?? "Malaysia"; // Default to Malaysia if location fails
       final stopwatch = Stopwatch()..start();
 
+      // Add conversation context if provided
+      if (conversationContext != null && conversationContext.isNotEmpty) {
+        request.fields['conversation_context'] = conversationContext;
+        print(
+            '📝 Adding conversation context (${conversationContext.length} chars)');
+      }
 
       // Add the existing fields
       request.fields['country'] = country ?? 'Malaysia';
@@ -347,7 +353,7 @@ class AudioProcessingService {
         final fineTunedText = jsonResponse['fine_tuned_model']?['text'] ??
             "No fine-tuned model available for $country";
 
-        // Create Gemini prompt using the GeminiService
+        // Create Gemini prompt using the GeminiService with latest device context
         final prompt = _geminiService.createGeminiPrompt(
             baseText, fineTunedText, deviceContext, country);
         print(prompt);
