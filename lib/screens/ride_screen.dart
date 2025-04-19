@@ -178,6 +178,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _isMapLoading = false;
         });
+        
+        // Setup location updates after initialization
+        _setupLocationUpdates();
       }
     });
 
