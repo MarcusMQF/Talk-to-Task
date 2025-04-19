@@ -7,13 +7,14 @@ import 'providers/voice_assistant_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/get_device_info.dart';
 import 'screens/ride_screen.dart';
+import 'package:location/location.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Request permissions at startup
   await _requestPermissions();
-  
+
   final deviceInfoService = DeviceInfoService();
   await deviceInfoService.initialize();
   await dotenv.load(fileName: ".env");
@@ -23,7 +24,7 @@ void main() async {
 Future<void> _requestPermissions() async {
   // Request location permissions
   await Permission.locationWhenInUse.request();
-  
+
   // Request other permissions your app needs
   await Permission.microphone.request();
 }
@@ -60,7 +61,8 @@ class PermissionGatewayScreen extends StatefulWidget {
   const PermissionGatewayScreen({super.key});
 
   @override
-  State<PermissionGatewayScreen> createState() => _PermissionGatewayScreenState();
+  State<PermissionGatewayScreen> createState() =>
+      _PermissionGatewayScreenState();
 }
 
 class _PermissionGatewayScreenState extends State<PermissionGatewayScreen> {
@@ -72,19 +74,33 @@ class _PermissionGatewayScreenState extends State<PermissionGatewayScreen> {
     _checkPermissions();
   }
 
+// In your _checkPermissions method
   Future<void> _checkPermissions() async {
     // Check if permissions are granted
     final locationStatus = await Permission.locationWhenInUse.status;
     final microphoneStatus = await Permission.microphone.status;
-    
+
+    // Also check if location service is enabled
+    bool locationServiceEnabled = false;
+    try {
+      locationServiceEnabled = await Location().serviceEnabled();
+      if (!locationServiceEnabled) {
+        locationServiceEnabled = await Location().requestService();
+      }
+    } catch (e) {
+      print("Error checking location service: $e");
+    }
+
     if (mounted) {
       setState(() {
         _checkingPermissions = false;
       });
     }
-    
-    // If both permissions are granted, proceed to main screen
-    if (locationStatus.isGranted && microphoneStatus.isGranted) {
+
+    // Only proceed if both permissions are granted AND location service is enabled
+    if (locationStatus.isGranted &&
+        microphoneStatus.isGranted &&
+        locationServiceEnabled) {
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const RideScreen()),
@@ -102,7 +118,7 @@ class _PermissionGatewayScreenState extends State<PermissionGatewayScreen> {
         ),
       );
     }
-    
+
     return Scaffold(
       body: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -130,9 +146,11 @@ class _PermissionGatewayScreenState extends State<PermissionGatewayScreen> {
                 await _checkPermissions();
               },
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
               ),
-              child: const Text('Grant Permissions', style: TextStyle(fontSize: 16)),
+              child: const Text('Grant Permissions',
+                  style: TextStyle(fontSize: 16)),
             ),
             const SizedBox(height: 16),
             TextButton(
