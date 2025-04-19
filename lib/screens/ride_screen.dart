@@ -155,32 +155,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _setupLocationUpdates();
     _setupWeatherUpdates();
 
-    _isMapLoading = true;
-    // Add this near the start of your initState
-    // Pass the initial online status to GeminiService
-    _geminiService.updatePromptContext(
-      isOnline: _isOnline,
-      hasActiveRequest: _hasActiveRequest,
-    );
-    // Add a timeout to prevent getting stuck forever
-    Future.delayed(const Duration(seconds: 10), () {
-      if (mounted && _isMapLoading) {
-        setState(() {
-          _isMapLoading = false;
-          print("Location timeout - proceeding without location");
-        });
-      }
-    });
-
-    // Call synchronously to ensure it runs immediately
-    _initializeLocation().then((_) {
-      if (mounted) {
-        setState(() {
-          _isMapLoading = false;
-        });
-      }
-    });
-
     // Add this callback to handle transcription completion
     audioProcessingService.onTranscriptionComplete =
         (String baseText, String fineTunedText, String geminiResponse) {
@@ -828,37 +802,52 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // First check if service is enabled
       bool serviceEnabled = await _location.serviceEnabled();
       if (!serviceEnabled) {
-        print("Location service disabled, requesting...");
-        serviceEnabled = await _location.requestService();
-        if (!serviceEnabled) {
-          print("User denied location service");
-          return;
-        }
+        print("Location service disabled");
+        // Use default location without waiting for service request
+        _currentPosition = LocationData.fromMap({
+          "latitude": 3.1390,
+          "longitude": 101.6869,
+          "accuracy": 0.0,
+          "altitude": 0.0,
+          "speed": 0.0,
+          "speed_accuracy": 0.0,
+          "heading": 0.0,
+        });
+        // Update driver marker with default location
+        _updateDriverLocationMarker();
+        return;
       }
 
-      // Now check permission
+      // Check permission
       var permissionStatus = await _location.hasPermission();
       if (permissionStatus == PermissionStatus.denied ||
           permissionStatus == PermissionStatus.deniedForever) {
-        print("Location permission denied, requesting...");
-        permissionStatus = await _location.requestPermission();
-        if (permissionStatus != PermissionStatus.granted) {
-          print("User denied location permission");
-          return;
-        }
+        print("Location permission denied");
+        // Use default location without waiting for permission request
+        _currentPosition = LocationData.fromMap({
+          "latitude": 3.1390,
+          "longitude": 101.6869,
+          "accuracy": 0.0,
+          "altitude": 0.0,
+          "speed": 0.0,
+          "speed_accuracy": 0.0,
+          "heading": 0.0,
+        });
+        // Update driver marker with default location
+        _updateDriverLocationMarker();
+        return;
       }
 
-      // Configure location settings with more conservative values
+      // Configure location settings
       await _location.changeSettings(
-        accuracy: LocationAccuracy.balanced, // Use balanced instead of high
-        interval: 10000, // 10 seconds
-        distanceFilter: 10, // 10 meters
+        accuracy: LocationAccuracy.balanced,
+        interval: 10000,
+        distanceFilter: 10,
       );
 
-      // Get current location
-      print("Getting current location...");
+      // Get current location with shorter timeout
       _currentPosition = await _location.getLocation().timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 3),
         onTimeout: () {
           print("Location timeout - using default location");
           return LocationData.fromMap({
@@ -873,13 +862,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         },
       );
 
-      print(
-          "Location obtained: ${_currentPosition?.latitude}, ${_currentPosition?.longitude}");
-
       // Update driver marker with current location
-      if (_currentPosition != null) {
-        _updateDriverLocationMarker();
-      }
+      _updateDriverLocationMarker();
 
       // Start location updates
       _setupLocationUpdates();
@@ -895,6 +879,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         "speed_accuracy": 0.0,
         "heading": 0.0,
       });
+      // Update driver marker with default location
+      _updateDriverLocationMarker();
     }
   }
 
@@ -2242,54 +2228,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         return Scaffold(
           body: Stack(
             children: [
-              if (_isMapLoading)
-                Container(
-                  color: themeProvider.isDarkMode
-                      ? Colors.black.withOpacity(0.6)
-                      : Colors.white.withOpacity(0.6),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Getting your location...',
-                          style: TextStyle(
-                            color: themeProvider.isDarkMode
-                                ? Colors.white
-                                : Colors.black,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Permission status: ${_currentPosition == null ? "Waiting" : "Granted"}',
-                          style: TextStyle(
-                            color: themeProvider.isDarkMode
-                                ? Colors.grey[300]
-                                : Colors.grey[700],
-                            fontSize: 12,
-                          ),
-                        ),
-                        // Add a manual button to proceed if location is stuck
-                        const SizedBox(height: 24),
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              _isMapLoading = false;
-                            });
-                          },
-                          child: const Text("Continue Anyway"),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
               GoogleMap(
                 initialCameraPosition: const CameraPosition(
                   target: _initialPosition,
@@ -2330,35 +2268,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                 mapToolbarEnabled: false,
                 compassEnabled: false, // Disable default compass button
               ),
-
-              // Map loading indicator - shown until location is ready
-              if (_isMapLoading)
-                Container(
-                  color: themeProvider.isDarkMode
-                      ? Colors.black.withOpacity(0.6)
-                      : Colors.white.withOpacity(0.6),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          "Getting your location...",
-                          style: TextStyle(
-                            color: themeProvider.isDarkMode
-                                ? Colors.white
-                                : Colors.black87,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
 
               // Rest of UI components
               _buildOnlineToggle(),
