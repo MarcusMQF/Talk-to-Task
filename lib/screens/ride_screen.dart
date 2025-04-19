@@ -759,7 +759,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     setState(() {
       _hasActiveRequest = true;
 
-      // Add this line
+      // Update Gemini context
       _geminiService.updatePromptContext(
         isOnline: _isOnline,
         hasActiveRequest: _hasActiveRequest,
@@ -777,6 +777,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Start a fresh timer
       _startRequestTimer();
     });
+    
+    // Fetch actual ride details outside of setState to avoid rebuilding too early
+    // This ensures we get real-time distance and duration data for the request
+    if (_currentPosition != null) {
+      Future.microtask(() => _fetchRideDetails());
+    }
   }
 
   void _dismissRequest() {
@@ -855,12 +861,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             destination: "KL Sentral, Kuala Lumpur",
             fareAmount: "RM 25.50",
             paymentMethod: "Cash",
-            // Separate distances for driver-to-pickup and pickup-to-destination
-            driverToPickupDistance: "3.7 km",
-            pickupToDestinationDistance: "15.2 km",
-            // Separate time estimates for pickup and trip duration
-            estimatedPickupTime: "5 minutes",
-            estimatedTripDuration: "25 minutes");
+            // Don't set static values for these - they'll be updated by _fetchRideDetails
+            driverToPickupDistance: _driverToPickupDistance,
+            pickupToDestinationDistance: _tripDistance,
+            estimatedPickupTime: _estimatedPickupTime,
+            estimatedTripDuration: _estimatedTripDuration);
       } else {
         // Just update the basic status when offline or no active request
         audioProcessingService.updateGeminiPromptContext(
@@ -869,6 +874,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         );
       }
     });
+    
+    // Fetch ride details when a new request is created
+    if (hasActiveRequest && _currentPosition != null) {
+      Future.microtask(() => _fetchRideDetails());
+    }
   }
 
   // Update _toggleOnlineStatus method to use the helper method
@@ -895,6 +905,27 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         // Reset request card controller state
         if (_requestCardController.isCompleted) {
           _requestCardController.reset();
+        }
+        
+        // If there's no current position yet, use a default position for Kuala Lumpur
+        // This ensures the first request has data even if location isn't fully initialized
+        if (_currentPosition == null) {
+          print("Setting default position for first request");
+          _currentPosition = LocationData.fromMap({
+            'latitude': 3.1390, // KL coordinates
+            'longitude': 101.6869,
+            'accuracy': 10.0,
+            'altitude': 0.0,
+            'speed': 0.0,
+            'speed_accuracy': 0.0,
+            'heading': 0.0,
+            'time': DateTime.now().millisecondsSinceEpoch.toDouble(),
+            'isMock': true,
+            'verticalAccuracy': 0.0,
+            'headingAccuracy': 0.0,
+            'elapsedRealtimeNanos': 0.0,
+          });
+          _updateDriverLocationMarker();
         }
         
         // Going online - show request card with animation after a short delay
