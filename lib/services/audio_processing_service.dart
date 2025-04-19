@@ -22,7 +22,7 @@ class AudioProcessingService {
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
   static const String SERVER_URL = '$BASE_URL/upload/';
-  static const String BASE_URL = 'https://d0c9-2405-3800-896-5927-8d6-b5ab-68c8-f316.ngrok-free.app';
+  static const String BASE_URL = 'https://bc21-27-125-249-60.ngrok-free.app';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
@@ -273,7 +273,11 @@ class AudioProcessingService {
     }
   }
 
-  Future<void> uploadAudio(File file, {String? conversationContext}) async {
+  Future<Map<String, dynamic>> uploadAudio(
+    File file, {
+    Map<String, dynamic>? rideContext,
+    String? conversationContext,
+  }) async {
     try {
       _isProcessing = true;
 
@@ -308,7 +312,7 @@ class AudioProcessingService {
       // Check if processing has been cancelled
       if (!_isProcessing) {
         print('Processing cancelled before upload, aborting');
-        return;
+        return {'error': 'Processing cancelled before upload'};
       }
 
       // Add audio file
@@ -376,6 +380,12 @@ class AudioProcessingService {
         if (onTranscriptionComplete != null) {
           onTranscriptionComplete!(baseText, fineTunedText, geminiResponse);
         }
+        return {
+          'baseText': baseText,
+          'fineTunedText': fineTunedText,
+          'geminiResponse': geminiResponse,
+          'jsonResponse': jsonResponse,
+        };
       } else {
         throw Exception(
             'Server returned ${response.statusCode}: ${responseData.body}');
@@ -391,6 +401,10 @@ class AudioProcessingService {
       if (onTranscriptionUpdate != null) {
         onTranscriptionUpdate!("Error: Failed to process audio");
       }
+
+            return {
+        'error': e.toString(),
+      };
     }
   }
 

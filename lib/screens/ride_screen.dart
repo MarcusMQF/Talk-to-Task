@@ -136,7 +136,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Compass button visibility state
   bool _showCompassButton = false;
   double _mapBearing = 0.0;
-
+  int _voiceRetryCount = 0;
+  static const int _maxVoiceRetries = 2;
   // Add state variable to track map loading
   bool _isMapLoading = true;
 
@@ -248,6 +249,127 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _isSpeaking = false;
       });
     });
+  }
+
+  Future<void> _stopRideResponseRecordingAndProcess() async {
+    try {
+      final path = await _recorder.stop();
+      _isRecording = false;
+      _isProcessing = true;
+
+      if (path == null) {
+        throw Exception('Recording stopped but no file path returned');
+      }
+
+      final file = File(path);
+      if (!await file.exists()) {
+        throw Exception('Recording file not found at: $path');
+      }
+
+      // Prepare ride context for Gemini agent
+      final rideContext = {
+        "pickup_location": _pickupLocation,
+        "destination": _destination,
+        "fare_amount": _fareAmount,
+        "payment_method": _paymentMethod,
+        "driver_to_pickup_distance": _driverToPickupDistance,
+        "pickup_to_destination_distance": _tripDistance,
+        "estimated_pickup_time": _estimatedPickupTime,
+        "estimated_trip_duration": _estimatedTripDuration,
+        "customer_name": _customerName,
+        "current_time": DateTime.now().toString(),
+        "driver_current_location": {
+          "latitude": _currentPosition?.latitude,
+          "longitude": _currentPosition?.longitude,
+        },
+      };
+
+      // Prepare multipart request to localhost backend
+      final uri = Uri.parse(
+          'https://bc21-27-125-249-60.ngrok-free.app/gemini_agent/evaluate_ride/');
+      final request = http.MultipartRequest('POST', uri);
+
+      // Add audio file
+      request.files.add(await http.MultipartFile.fromPath('audio', file.path));
+
+      // Add ride context as a field
+      request.fields['ride_context'] = jsonEncode(rideContext);
+
+      // Optionally add conversation context
+      request.fields['conversation_context'] =
+          "The user is responding to a ride request. They must say yes, accept, no, or decline.";
+
+      // Send request and get response
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final geminiResult = jsonDecode(response.body);
+
+        // Parse Gemini agent's response
+        final recommendation = geminiResult?['recommendation']?.toString().toUpperCase() ?? '';
+        print("Gemini agent recommendation: $recommendation");
+
+        // Decide based on Gemini's response
+  if (recommendation == 'ACCEPT') {
+    _voiceRetryCount = 0;
+    _speakResponse("Accepting ride request").then((_) {
+      if (mounted) {
+        _acceptRideRequest();
+      }
+    });
+  } else if (recommendation == 'DECLINE') {
+    _voiceRetryCount = 0;
+    _speakResponse("Declining ride request").then((_) {
+      if (mounted) {
+        _dismissRequest();
+      }
+    });
+  } else {
+    // Fallback: ask user again or handle as undecided
+    if (_voiceRetryCount < _maxVoiceRetries) {
+      _voiceRetryCount++;
+      _speakResponse("Sorry, I couldn't understand. Please say accept or decline.").then((_) {
+        if (mounted) {
+          _startVoiceResponseListener();
+        }
+      });
+    } else {
+      _voiceRetryCount = 0;
+      _speakResponse("No valid response detected. Declining the ride.").then((_) {
+        if (mounted) {
+          _dismissRequest();
+        }
+      });
+    }
+  }
+}
+
+      _isProcessing = false;
+    } catch (e) {
+      print('Error in _stopRideResponseRecordingAndProcess: $e');
+      _isProcessing = false;
+      _speakResponse("Sorry, there was an error processing your response.");
+    }
+
+    if (_voiceRetryCount < 0) {
+      _voiceRetryCount++;
+      _speakResponse(
+              "Sorry, I couldn't understand. Please say accept or decline.")
+          .then((_) {
+        if (mounted) {
+          _startVoiceResponseListener();
+        }
+      });
+    } else {
+      _voiceRetryCount = 0;
+      _speakResponse("No valid response detected. Declining the ride.")
+          .then((_) {
+        if (mounted) {
+          _dismissRequest();
+        }
+      });
+    }
   }
 
 // Update your _speakResponse method to ensure proper handling of TTS completion
@@ -421,7 +543,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     try {
       print('Initializing wake word detection...');
 
-      bool isInitialized = await WakeWordService.isInitialized() ?? false;
+      bool isInitialized = await WakeWordService.isInitialized();
       if (isInitialized) {
         print("Wake word detection already initialized");
         return;
@@ -1636,7 +1758,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         });
 
         // Start listening after a short pause to ensure TTS is done
-        Future.delayed(const Duration(milliseconds: 300), () {
+        Future.delayed(const Duration(milliseconds: 400), () {
           if (mounted) {
             print("Starting voice response listener now");
             _startVoiceResponseListener();
@@ -1646,7 +1768,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
-// Add this method to start voice recording specifically for ride responses
   Future<void> _startVoiceResponseListener() async {
     try {
       print('\n=== Listening for ride acceptance ===');
@@ -1675,7 +1796,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       print('Ride response listening started');
 
-      // Set recording state variables - but don't show UI feedback
+      // Set recording state variables
       _isRecording = true;
       _hasDetectedSpeech = false;
       _silenceCount = 0;
@@ -1685,6 +1806,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       print("Starting amplitude monitoring for ride response...");
       _startRideResponseAmplitudeMonitoring();
+
+      // When silence is detected, stop and process
+      // You likely already call _stopRideResponseRecordingAndProcess from amplitude monitoring
+      // So, update that method as follows:
     } catch (e) {
       print('Error in _startVoiceResponseListener: $e');
       _isRecording = false;
@@ -1759,42 +1884,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         print('❌ Error in amplitude monitoring: $e');
       }
     });
-  }
-
-// Add method to stop recording and process the ride response
-  Future<void> _stopRideResponseRecordingAndProcess() async {
-    try {
-      final path = await _recorder.stop();
-      _isRecording = false;
-      _isProcessing = true;
-
-      if (path == null) {
-        throw Exception('Recording stopped but no file path returned');
-      }
-
-      final file = File(path);
-      if (!await file.exists()) {
-        throw Exception('Recording file not found at: $path');
-      }
-
-      // This is a simplified transcription for ride requests
-      // For faster response, we'll process locally
-      // Upload audio with specific ride acceptance context
-      await audioProcessingService.uploadAudio(
-        file,
-        conversationContext:
-            "The user is responding to a ride request. They must say yes, accept, no, or decline.",
-      );
-
-      // Set up a callback to handle the ride response
-      audioProcessingService.onTranscriptionComplete =
-          (String baseText, String fineTunedText, String geminiResponse) {
-        _processRideResponseTranscription(fineTunedText.toLowerCase());
-      };
-    } catch (e) {
-      print('Error in _stopRideResponseRecordingAndProcess: $e');
-      _isProcessing = false;
-    }
   }
 
 // Add method to process the transcription for ride responses

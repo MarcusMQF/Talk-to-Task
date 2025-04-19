@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import '../api_keys.dart';
+import 'package:http/http.dart' as http;
 
 class GeminiService {
   late final GenerativeModel _model;
   late ChatSession? _chat;
+  final String _baseUrl = 'https://bc21-27-125-249-60.ngrok-free.app';
 
   // Added context variables for prompts
   bool _isOnline = true;
@@ -91,20 +94,24 @@ class GeminiService {
 
     // Add distance information - separate driver-to-pickup from pickup-to-destination
     if (_rideContext['driverToPickupDistance'] != null) {
-      buffer.write('Distance to pickup: ${_rideContext['driverToPickupDistance']}\n');
+      buffer.write(
+          'Distance to pickup: ${_rideContext['driverToPickupDistance']}\n');
     }
-    
+
     if (_rideContext['pickupToDestinationDistance'] != null) {
-      buffer.write('Trip distance (pickup to destination): ${_rideContext['pickupToDestinationDistance']}\n');
+      buffer.write(
+          'Trip distance (pickup to destination): ${_rideContext['pickupToDestinationDistance']}\n');
     }
 
     // Add time information - separate pickup ETA from trip duration
     if (_rideContext['estimatedPickupTime'] != null) {
-      buffer.write('Est. time to pickup: ${_rideContext['estimatedPickupTime']}\n');
+      buffer.write(
+          'Est. time to pickup: ${_rideContext['estimatedPickupTime']}\n');
     }
 
     if (_rideContext['estimatedTripDuration'] != null) {
-      buffer.write('Est. trip duration after pickup: ${_rideContext['estimatedTripDuration']}\n');
+      buffer.write(
+          'Est. trip duration after pickup: ${_rideContext['estimatedTripDuration']}\n');
     }
 
     // Add fare and payment information
@@ -198,7 +205,6 @@ Recent Driver Activity:
     String? pickupToDestinationDistance,
     String? estimatedPickupTime,
     String? estimatedTripDuration,
-    
   }) {
     _isOnline = isOnline;
     // If driver is offline, there can't be any active requests
@@ -210,21 +216,66 @@ Recent Driver Activity:
     if (destination != null) _rideContext['destination'] = destination;
     if (paymentMethod != null) _rideContext['paymentMethod'] = paymentMethod;
     if (fareAmount != null) _rideContext['fareAmount'] = fareAmount;
-    
+
     // Store distance information (both legacy and new detailed format)
     if (tripDistance != null) _rideContext['tripDistance'] = tripDistance;
-    if (driverToPickupDistance != null) _rideContext['driverToPickupDistance'] = driverToPickupDistance;
-    if (pickupToDestinationDistance != null) _rideContext['pickupToDestinationDistance'] = pickupToDestinationDistance;
-    
+    if (driverToPickupDistance != null)
+      _rideContext['driverToPickupDistance'] = driverToPickupDistance;
+    if (pickupToDestinationDistance != null)
+      _rideContext['pickupToDestinationDistance'] = pickupToDestinationDistance;
+
     // Store time estimates
     if (estimatedPickupTime != null)
       _rideContext['estimatedPickupTime'] = estimatedPickupTime;
     if (estimatedTripDuration != null)
       _rideContext['estimatedTripDuration'] = estimatedTripDuration;
-    
+
     // Clear ride context if offline
     if (!isOnline) {
       _rideContext.clear();
+    }
+  }
+
+  Future<Map<String, dynamic>> evaluateRideRequest(
+      Map<String, dynamic> rideDetails) async {
+    try {
+      // For testing only - return a dummy response to avoid API failure
+      return {
+        'recommendation': 'accept',
+        'action': 'accept',
+        'explanation': 'This is a profitable ride with good fare amount.',
+        'confidence': 0.85
+      };
+
+      /* COMMENTED OUT REAL IMPLEMENTATION - RESTORE WHEN API IS WORKING
+    // Make sure to use the correct API endpoint
+    final response = await http.post(
+      Uri.parse('https://your-backend-url/api/evaluate-ride'),  // Verify this URL is correct
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(rideDetails),
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      print('Failed to evaluate ride: ${response.statusCode}');
+      // Return a fallback response instead of throwing an exception
+      return {
+        'recommendation': 'ask_user',
+        'action': 'ask_user',
+        'explanation': 'I couldn\'t analyze this ride. Would you like to accept it?'
+      };
+    }
+    */
+    } catch (e) {
+      print('Error evaluating ride: $e');
+      // Return a fallback response
+      return {
+        'recommendation': 'ask_user',
+        'action': 'ask_user',
+        'explanation':
+            'Unable to evaluate this ride. Would you like to accept it?'
+      };
     }
   }
 
