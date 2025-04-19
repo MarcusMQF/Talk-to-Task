@@ -293,12 +293,6 @@ class AudioProcessingService {
       final country = deviceContext['location'] ?? "Malaysia"; // Default to Malaysia if location fails
       final stopwatch = Stopwatch()..start();
 
-      // Add conversation context if provided
-      if (conversationContext != null && conversationContext.isNotEmpty) {
-        request.fields['conversation_context'] = conversationContext;
-        print(
-            '📝 Adding conversation context (${conversationContext.length} chars)');
-      }
 
       // Add the existing fields
       request.fields['country'] = country ?? 'Malaysia';

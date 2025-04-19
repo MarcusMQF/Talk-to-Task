@@ -196,28 +196,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         });
 
         // Optional: Speak the response
-        _speakResponse(geminiResponse).then((_) {
-          _startNextRecordingAfterResponse();
-        });
+        _speakResponse(geminiResponse);
+        
       }
     };
-
-    String _generateSessionContext() {
-      if (_sessionConversationHistory.isEmpty) {
-        return "";
-      }
-
-      StringBuffer context =
-          StringBuffer("Previous messages in our conversation:\n");
-
-      for (int i = 0; i < _sessionConversationHistory.length; i++) {
-        context.writeln("User: ${_sessionConversationHistory[i]['user']}");
-        context.writeln(
-            "Assistant: ${_sessionConversationHistory[i]['assistant']}\n");
-      }
-
-      return context.toString();
-    }
 
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -296,59 +278,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
-// Add this method to your _RideScreenState class
-  void _startNextRecordingAfterResponse() async {
-    // Short delay before starting new recording to allow user to process response
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    if (!mounted) return;
-
-    // Make sure speech has stopped before recording
-    if (_isSpeaking) {
-      await _flutterTts.stop();
-    }
-
-    // Reset states for new recording
-    setState(() {
-      _isRecording = true;
-      _isProcessing = false;
-      _hasDetectedSpeech = false;
-      _silenceCount = 0;
-      _silenceDuration = 20; // Use 20 instead of PRE_SPEECH_SILENCE_COUNT (100)
-      _lastAmplitude = -30.0;
-      _currentAmplitude = -30.0;
-      _transcription = "Listening for follow-up question...";
-    });
-
-    try {
-      final path = await _getTempFilePath();
-      print('Recording path: $path');
-
-      // Start recording with optimized settings
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          bitRate: 768000,
-          sampleRate: 48000,
-          numChannels: 2,
-        ),
-        path: path,
-      );
-
-      print('Auto-recording started after response, with silence count = 20');
-      _startAmplitudeMonitoring();
-    } catch (e) {
-      print("Error starting auto-recording: $e");
-      setState(() {
-        _isRecording = false;
-        _transcription = "Error: Failed to restart recording";
-      });
-    }
-  }
-
   @override
   void dispose() {
-    WakeWordService.dispose(); // Add this line
+    WakeWordService.dispose(); 
     _voiceProvider.removeCommandCallback();
 
     // Remove theme change listener
@@ -1072,15 +1004,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         throw Exception('Recording file is empty');
       }
 
-      // Get the session context
-      final sessionContext = _generateSessionContext();
-      print('Session context length: ${sessionContext.length} characters');
 
       // Upload audio with context from current session
-      await audioProcessingService.uploadAudio(
-        file,
-        conversationContext: sessionContext,
-      );
+      await audioProcessingService.uploadAudio(file);
     } catch (e) {
       print('Error in _stopAndSendRecording: $e');
       setState(() {
@@ -1361,10 +1287,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         // Delete the recorded file...
       }
 
-      // Reset conversation session state
-      _isInConversationSession = false;
-      _sessionConversationHistory = [];
-      print("Conversation session ended, context cleared");
 
       setState(() {
         _isRecording = false;
@@ -1377,9 +1299,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
     } catch (e) {
       print('Error in abortRecord: $e');
-      // Reset conversation session anyway
-      _isInConversationSession = false;
-      _sessionConversationHistory = [];
 
       setState(() {
         _isRecording = false;
@@ -2624,16 +2543,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Widget _buildVoiceModal(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
-    // Reset conversation history when modal first opens
-    if (!_isInConversationSession) {
-      _sessionConversationHistory = [];
-      _isInConversationSession = true;
-      print("Starting new conversation session");
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _speakResponse("I am listening");
-      });
-    }
     print(
         'Building voice modal: isRecording=$_isRecording, isProcessing=$_isProcessing');
 
