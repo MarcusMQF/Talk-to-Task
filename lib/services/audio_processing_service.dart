@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:http_parser/http_parser.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../services/gemini_service.dart';
 import '../services/get_device_info.dart';
@@ -17,14 +18,13 @@ class AudioProcessingService {
   // Constants
   static const double SILENCE_THRESHOLD = 3.0;
   static const double AMPLITUDE_CHANGE_THRESHOLD = 50.0;
-  static const int INITIAL_SILENCE_DURATION = 100;
+  static const int INITIAL_SILENCE_DURATION = 500;
   static const int PRE_SPEECH_SILENCE_COUNT = 100;
-  static const int POST_SPEECH_SILENCE_COUNT = 10;
+  static const int POST_SPEECH_SILENCE_COUNT = 50;
 
-  static const String SERVER_URL = '$BASE_URL/upload/';
-  static const String BASE_URL = 'https://bc21-27-125-249-60.ngrok-free.app';
+  static final BASE_URL = dotenv.env['BASE_URL'] ?? '';
+  static String SERVER_URL = '$BASE_URL/upload/';
 
-  // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
   final GeminiService _geminiService = GeminiService();
   final DeviceInfoService _deviceInfo = DeviceInfoService();
@@ -45,6 +45,7 @@ class AudioProcessingService {
   Function(bool isProcessing)? onProcessingStateChanged;
   Function(String baseText, String enhancedText, String geminiResponse)?
       onTranscriptionComplete;
+
   // Constructor
   AudioProcessingService() {
     // Initialize in the background with better error handling
@@ -58,6 +59,64 @@ class AudioProcessingService {
       print('Fatal error in AudioProcessingService constructor: $e');
     }
   }
+
+Future<void> processRideResponse({
+  required File audioFile,
+  required Map<String, dynamic> rideContext,
+  required Function(String recommendation) onRecommendationReceived,
+  required Function() onError
+}) async {
+  try {
+    print('Processing ride response audio');
+    _isProcessing = true;
+
+    if (!await audioFile.exists()) {
+      throw Exception('Audio file not found at: ${audioFile.path}');
+    }
+
+    final fileSize = await audioFile.length();
+    if (fileSize == 0) {
+      throw Exception('Audio file is empty');
+    }
+
+    // Prepare multipart request to backend
+    final uri = Uri.parse('$BASE_URL/gemini_agent/evaluate_ride/');
+    final request = http.MultipartRequest('POST', uri);
+
+    // Add audio file
+    request.files.add(await http.MultipartFile.fromPath('audio', audioFile.path));
+
+    // Add ride context as a field
+    request.fields['ride_context'] = jsonEncode(rideContext);
+
+    // Add conversation context
+    request.fields['conversation_context'] =
+        "The user is responding to a ride request. They must say yes, accept, no, or decline.";
+
+    // Send request and get response
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode == 200) {
+      final geminiResult = jsonDecode(response.body);
+
+      // Parse Gemini agent's response
+      final recommendation = geminiResult?['recommendation']?.toString().toUpperCase() ?? '';
+      print("Gemini agent recommendation: $recommendation");
+
+      // Pass back to caller
+      onRecommendationReceived(recommendation);
+    } else {
+      throw Exception('Failed to process ride response: ${response.statusCode}');
+    }
+  } catch (e) {
+    print('Error in processRideResponse: $e');
+    onError();
+  } finally {
+    _isProcessing = false;
+  }
+}
+
   // Get temporary file path for recording
   Future<String> getTempFilePath() async {
     final dir = await getTemporaryDirectory();
@@ -80,150 +139,142 @@ class AudioProcessingService {
     print('Device context: ${context.toString()}');
   }
 
-  // Start recording method
-  Future<void> startRecording() async {
-    try {
-      print('\n=== Starting Recording Process ===');
+// New method to handle ride voice response recording
+Future<File?> startRideResponseRecording() async {
+  try {
+    print('\n=== Listening for ride acceptance ===');
 
-      // Cancel any existing timers
-      _amplitudeTimer?.cancel();
-      _amplitudeTimer = null;
-
-      // Check permission
-      if (!await _recorder.hasPermission()) {
-        throw Exception('Microphone permission denied');
-      }
-
-      final path = await getTempFilePath();
-      print('Recording path: $path');
-
-      // Start recording with optimized settings
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          bitRate: 768000,
-          sampleRate: 48000,
-          numChannels: 2,
-        ),
-        path: path,
-      );
-
-      print('Recording started in WAV mode');
-
-      // Reset state variables
-      _isRecording = true;
-      _hasDetectedSpeech = false;
-      _silenceCount = 0;
-      _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
-      _lastAmplitude = -30.0;
-      _currentAmplitude = -30.0;
-
-      // Notify through callback
-      if (onRecordingStateChanged != null) {
-        onRecordingStateChanged!(true);
-      }
-
-      if (onTranscriptionUpdate != null) {
-        onTranscriptionUpdate!("Listening...");
-      }
-
-      // Start monitoring amplitude
-      startAmplitudeMonitoring();
-    } catch (e) {
-      print('Error in startRecording: $e');
-      _isRecording = false;
-
-      if (onRecordingStateChanged != null) {
-        onRecordingStateChanged!(false);
-      }
-
-      if (onTranscriptionUpdate != null) {
-        onTranscriptionUpdate!("Error: Failed to start recording");
-      }
-    }
-  }
-
-  // Monitor audio amplitude
-  void startAmplitudeMonitoring() {
-    // Ensure no duplicate timers
+    // Cancel any existing timers
     _amplitudeTimer?.cancel();
+    _amplitudeTimer = null;
 
-    int readingsToSkip = 2;
-    _amplitudeTimer =
-        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      if (!_isRecording) {
-        print("Recording stopped, cancelling amplitude timer");
-        timer.cancel();
+    if (!await _recorder.hasPermission()) {
+      throw Exception('Microphone permission denied');
+    }
+
+    // Get temporary file path
+    final dir = await getTemporaryDirectory();
+    final path = p.join(dir.path, 'ride_response_audio.wav');
+    print('Recording path for ride response: $path');
+
+    // Start recording with optimized settings
+    await _recorder.start(
+      const RecordConfig(
+        encoder: AudioEncoder.wav,
+        bitRate: 768000,
+        sampleRate: 48000,
+        numChannels: 2,
+      ),
+      path: path,
+    );
+
+    print('Ride response listening started');
+
+    _isRecording = true;
+    _hasDetectedSpeech = false;
+    _silenceCount = 0;
+    _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
+    _lastAmplitude = -30.0;
+    _currentAmplitude = -30.0;
+
+    // Start monitoring amplitudes to detect speech and silence
+    return File(path);
+  } catch (e) {
+    print('Error in startRideResponseRecording: $e');
+    _isRecording = false;
+    return null;
+  }
+}
+
+// Specialized amplitude monitoring for ride responses
+void startRideResponseAmplitudeMonitoring(
+  Function() onSilenceDetected
+) {
+  // Ensure we don't have multiple timers
+  _amplitudeTimer?.cancel();
+
+  int readingsToSkip = 2;
+  _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+    if (!_isRecording) {
+      print("Recording stopped, cancelling amplitude timer");
+      timer.cancel();
+      return;
+    }
+
+    try {
+      final amplitude = await _recorder.getAmplitude();
+      double newAmplitude = amplitude.current;
+
+      // Skip invalid amplitude values
+      if (newAmplitude.isInfinite || newAmplitude.isNaN) {
+        print('⚠️ Skipping invalid amplitude value');
         return;
       }
 
-      try {
-        final amplitude = await _recorder.getAmplitude();
-        double newAmplitude = amplitude.current;
+      _currentAmplitude = newAmplitude;
 
-        // Skip invalid amplitude values
-        if (newAmplitude.isInfinite || newAmplitude.isNaN) {
-          print('⚠️ Skipping invalid amplitude value');
-          return;
-        }
-
-        _currentAmplitude = newAmplitude;
-
-        // Handle initial readings
-        if (readingsToSkip > 0) {
-          print('\n=== 🎤 Reading ${3 - readingsToSkip} Skipped ===');
-          print('Amplitude: ${_currentAmplitude.toStringAsFixed(2)} dB');
-          _lastAmplitude = _currentAmplitude;
-          readingsToSkip--;
-          return;
-        }
-
-        // Amplitude analysis
-        double percentageChange = 0.0;
-        if (_lastAmplitude.abs() > 0.001 && !_lastAmplitude.isInfinite) {
-          percentageChange =
-              ((_currentAmplitude - _lastAmplitude) / _lastAmplitude.abs()) *
-                  100;
-          percentageChange = percentageChange.clamp(-1000.0, 1000.0);
-
-          print('\n=== 🎙️ Amplitude Analysis ===');
-          print('Previous: ${_lastAmplitude.toStringAsFixed(2)} dB');
-          print('Current:  ${_currentAmplitude.toStringAsFixed(2)} dB');
-          print('Change:   ${percentageChange.toStringAsFixed(2)}%');
-          print('Silence:  $_silenceCount/$_silenceDuration');
-
-          // Speech detection
-          if (percentageChange.abs() > AMPLITUDE_CHANGE_THRESHOLD) {
-            if (!_hasDetectedSpeech) {
-              print(
-                  'Speech detected - Amplitude change: ${percentageChange.toStringAsFixed(2)}%');
-              _hasDetectedSpeech = true;
-              _silenceDuration = POST_SPEECH_SILENCE_COUNT;
-            }
-            _silenceCount = 0;
-          }
-          // Silence detection
-          else if (_currentAmplitude < SILENCE_THRESHOLD) {
-            _silenceCount++;
-            if (_silenceCount >= _silenceDuration) {
-              print('Recording stopped - Silence duration reached');
-              timer.cancel();
-              stopAndSendRecording();
-            }
-          } else {
-            _silenceCount = 0;
-          }
-
-          _lastAmplitude = _currentAmplitude;
-        }
-      } catch (e) {
-        print('❌ Error in amplitude monitoring: $e');
+      // Handle initial readings
+      if (readingsToSkip > 0) {
+        _lastAmplitude = _currentAmplitude;
+        readingsToSkip--;
+        return;
       }
-    });
 
-    print("Amplitude monitoring started");
+      // Amplitude analysis
+      if (_lastAmplitude.abs() > 0.001 && !_lastAmplitude.isInfinite) {
+        double percentageChange = ((_currentAmplitude - _lastAmplitude) / _lastAmplitude.abs()) * 100;
+        percentageChange = percentageChange.clamp(-1000.0, 1000.0);
+
+        // Speech detection
+        if (percentageChange.abs() > AMPLITUDE_CHANGE_THRESHOLD) {
+          if (!_hasDetectedSpeech) {
+            print('Speech detected in ride response');
+            _hasDetectedSpeech = true;
+            _silenceDuration = POST_SPEECH_SILENCE_COUNT;
+          }
+          _silenceCount = 0;
+        }
+        // Silence detection
+        else if (_currentAmplitude < SILENCE_THRESHOLD) {
+          _silenceCount++;
+          if (_silenceCount >= _silenceDuration) {
+            print('Recording stopped - Silence duration reached');
+            timer.cancel();
+            onSilenceDetected();
+          }
+        } else {
+          _silenceCount = 0;
+        }
+
+        _lastAmplitude = _currentAmplitude;
+      }
+    } catch (e) {
+      print('❌ Error in amplitude monitoring: $e');
+    }
+  });
+  
+  print("Ride response amplitude monitoring started");
+}
+Future<File?> stopRideResponseRecording() async {
+  try {
+    final path = await _recorder.stop();
+    _isRecording = false;
+    
+    if (path == null) {
+      throw Exception('Recording stopped but no file path returned');
+    }
+
+    final file = File(path);
+    if (!await file.exists()) {
+      throw Exception('Recording file not found at: $path');
+    }
+
+    return file;
+  } catch (e) {
+    print('Error stopping ride response recording: $e');
+    return null;
   }
-
+}
   // Stop recording and process audio
   Future<void> stopAndSendRecording() async {
     try {
@@ -335,7 +386,7 @@ class AudioProcessingService {
 
       print('📤 Sending request to backend...');
       final response = await request.send().timeout(
-        const Duration(seconds: 10),
+        const Duration(seconds: 20),
         onTimeout: () {
           print('❌ Backend request timed out after 20 seconds');
           throw TimeoutException('Backend request timed out');
@@ -402,7 +453,7 @@ class AudioProcessingService {
         onTranscriptionUpdate!("Error: Failed to process audio");
       }
 
-            return {
+      return {
         'error': e.toString(),
       };
     }

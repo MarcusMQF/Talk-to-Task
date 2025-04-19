@@ -1,32 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'dart:async';
 import 'package:flutter/physics.dart';
 import 'package:talk_to_task/services/audio_processing_service.dart';
 import 'package:talk_to_task/services/gemini_service.dart';
-import '../constants/app_theme.dart';
-import '../constants/map_styles.dart';
-import '../providers/voice_assistant_provider.dart';
-import '../providers/theme_provider.dart';
-import '../screens/ai_chat_screen.dart';
-import 'dart:io';
-import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:location/location.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart' show rootBundle;
+
+import '../constants/app_theme.dart';
+import '../constants/map_styles.dart';
+import '../providers/voice_assistant_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/wake_word.dart';
 import '../services/get_device_info.dart';
 import '../widgets/animated_weather_indicator.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'dart:typed_data';
-import 'package:flutter_tts/flutter_tts.dart';
+import '../screens/ai_chat_screen.dart';
+
+import 'dart:io';
+import 'dart:convert';
+import 'dart:async';
 import 'dart:math';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:typed_data';
 
 class RideScreen extends StatefulWidget {
   const RideScreen({super.key});
@@ -45,25 +47,31 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   late AnimationController _requestCardController;
   late Animation<Offset> _requestCardAnimation;
 
-  // Voice button position
+  // Timer animations
+  late AnimationController _timerShakeController;
+  late AnimationController _timerGlowController;
+  late Animation<double> _timerShakeAnimation;
+  late Animation<double> _timerGlowAnimation;
   late AnimationController _voiceButtonAnimController;
+
+  // Voice button position
   Offset _voiceButtonPosition = const Offset(
       300, 600); // Will be adjusted in initState based on screen size
-
+  Timer? _requestTimer;
+  int _remainingSeconds = 15;
+  bool _isSpeaking = false;
   bool _isOnline = false;
   bool _hasActiveRequest = false;
   bool _isProcessing = false;
-  int _remainingSeconds = 15;
-  Timer? _requestTimer;
   final FlutterTts _flutterTts = FlutterTts();
-  bool _isSpeaking = false;
+
   // Google Maps controller
   GoogleMapController? _mapController;
   bool _mapInitialized = false; // Track if map has been initially centered
   List<Map<String, String>> _sessionConversationHistory = [];
+
   // Initial camera position (example coordinates - should be replaced with actual pickup location)
-  static const LatLng _initialPosition =
-      LatLng(3.1390, 101.6869); // KL coordinates
+  static const LatLng _initialPosition = LatLng(3.1390, 101.6869); // KL coordinates
   bool _isInitialPrompt = true;
 
   // Markers for pickup and dropoff locations
@@ -71,12 +79,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Marker? _driverLocationMarker;
   Marker? _pickupLocationMarker;
   Set<Polyline> _polylines = {};
-
-  // Timer animations
-  late AnimationController _timerShakeController;
-  late AnimationController _timerGlowController;
-  late Animation<double> _timerShakeAnimation;
-  late Animation<double> _timerGlowAnimation;
 
   // Weather related properties
   bool _isLoadingWeather = false;
@@ -87,16 +89,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   late VoiceAssistantProvider _voiceProvider;
 
   final AudioRecorder _recorder = AudioRecorder();
-  final AudioProcessingService audioProcessingService =
-      AudioProcessingService();
+  final AudioProcessingService audioProcessingService = AudioProcessingService();
   final DeviceInfoService _deviceInfo = DeviceInfoService();
   final GeminiService _geminiService = GeminiService();
+
   String _transcription = "Press the mic to start speaking.";
   String _geminiResponse = "";
   final StreamController<String> _geminiStreamController =
       StreamController<String>.broadcast();
-  bool _isRecording = false;
 
+  bool _isRecording = false;
   Timer? _amplitudeTimer;
   Timer? _silenceTimer;
   double _lastAmplitude = -30.0;
@@ -108,7 +110,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   static const double AMPLITUDE_CHANGE_THRESHOLD = 50.0; // 50% change threshold
   static const int INITIAL_SILENCE_DURATION = 100;
   static const int PRE_SPEECH_SILENCE_COUNT = 100; // Before speech detection
-  static const int POST_SPEECH_SILENCE_COUNT = 10; // After speech detection
+  static const int POST_SPEECH_SILENCE_COUNT = 15; // After speech detection
 
   final Location _location = Location();
   LocationData? _currentPosition;
@@ -124,32 +126,32 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   String _driverToPickupDistance = "0.0 km";
 
   // Navigation & directions related properties
+  List<Map<String, dynamic>> _navigationSteps = [];
+  Timer? _navigationUpdateTimer;
+
+  bool _isMapLoading = true;
   bool _isDirectionsLoading = false;
   bool _isNavigationMode = false;
   bool _isNavigatingToPickup = false;
   bool _isNavigatingToDestination = false;
   bool _hasPickedUpPassenger = false;
   int _currentNavigationStep = 0;
-  List<Map<String, dynamic>> _navigationSteps = [];
-  Timer? _navigationUpdateTimer;
   bool _hasSetInitialPosition = false;
+
   // Compass button visibility state
   bool _showCompassButton = false;
   double _mapBearing = 0.0;
-  int _voiceRetryCount = 0;
-  static const int _maxVoiceRetries = 2;
-  // Add state variable to track map loading
-  bool _isMapLoading = true;
 
-  // Add this flag near the top of the class with other state variables
-  bool _hasInitializedLocation = false;
+  //Voice Retries
+  static const int _maxVoiceRetries = 2;
+  int _voiceRetryCount = 0;
 
   @override
   void initState() {
     super.initState();
 
     _isMapLoading = true;
-    
+
     _setupMarkers();
     _setupAnimations();
     _setupRequestCardAnimations();
@@ -158,10 +160,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _initializeWakeWordDetection();
     _initializeTts();
     _setupWeatherUpdates();
-    
-    // Immediately trigger weather fetch to avoid loading state
-    _fetchWeatherData();
-    
     _getInitialLocation();
     _isMapLoading = true;
     // Add this near the start of your initState
@@ -186,12 +184,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _isMapLoading = false;
         });
-        
-        // We don't need to set up continuous location updates anymore
-        // Just make sure we have the initial location
-        if (!_hasInitializedLocation) {
-          _setupLocationUpdates(); // This will get location once only
-        }
+
+        // Setup location updates after initialization
+        _setupLocationUpdates();
       }
     });
 
@@ -317,43 +312,47 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         final geminiResult = jsonDecode(response.body);
 
         // Parse Gemini agent's response
-        final recommendation = geminiResult?['recommendation']?.toString().toUpperCase() ?? '';
+        final recommendation =
+            geminiResult?['recommendation']?.toString().toUpperCase() ?? '';
         print("Gemini agent recommendation: $recommendation");
 
         // Decide based on Gemini's response
-  if (recommendation == 'ACCEPT') {
-    _voiceRetryCount = 0;
-    _speakResponse("Accepting ride request").then((_) {
-      if (mounted) {
-        _acceptRideRequest();
-      }
-    });
-  } else if (recommendation == 'DECLINE') {
-    _voiceRetryCount = 0;
-    _speakResponse("Declining ride request").then((_) {
-      if (mounted) {
-        _dismissRequest();
-      }
-    });
-  } else {
-    // Fallback: ask user again or handle as undecided
-    if (_voiceRetryCount < _maxVoiceRetries) {
-      _voiceRetryCount++;
-      _speakResponse("Sorry, I couldn't understand. Please say accept or decline.").then((_) {
-        if (mounted) {
-          _startVoiceResponseListener();
+        if (recommendation == 'ACCEPT') {
+          _voiceRetryCount = 0;
+          _speakResponse("Accepting ride request").then((_) {
+            if (mounted) {
+              _acceptRideRequest();
+            }
+          });
+        } else if (recommendation == 'DECLINE') {
+          _voiceRetryCount = 0;
+          _speakResponse("Declining ride request").then((_) {
+            if (mounted) {
+              _dismissRequest();
+            }
+          });
+        } else {
+          // Fallback: ask user again or handle as undecided
+          if (_voiceRetryCount < _maxVoiceRetries) {
+            _voiceRetryCount++;
+            _speakResponse(
+                    "Sorry, I couldn't understand. Please say accept or decline.")
+                .then((_) {
+              if (mounted) {
+                _startVoiceResponseListener();
+              }
+            });
+          } else {
+            _voiceRetryCount = 0;
+            _speakResponse("No valid response detected. Declining the ride.")
+                .then((_) {
+              if (mounted) {
+                _dismissRequest();
+              }
+            });
+          }
         }
-      });
-    } else {
-      _voiceRetryCount = 0;
-      _speakResponse("No valid response detected. Declining the ride.").then((_) {
-        if (mounted) {
-          _dismissRequest();
-        }
-      });
-    }
-  }
-}
+      }
 
       _isProcessing = false;
     } catch (e) {
@@ -899,7 +898,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     setState(() {
       _hasActiveRequest = true;
 
-      // Update Gemini context
+      // Add this line
       _geminiService.updatePromptContext(
         isOnline: _isOnline,
         hasActiveRequest: _hasActiveRequest,
@@ -916,23 +915,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // Start a fresh timer
       _startRequestTimer();
-      
-      // Clear any existing polylines to ensure no routes are shown
-      _polylines.clear();
-      
-      // Ensure no loading indicator is shown
-      _isDirectionsLoading = false;
     });
-    
-    // Fetch actual ride details outside of setState to avoid rebuilding too early
-    // This ensures we get real-time distance and duration data for the request
-    if (_currentPosition != null) {
-      // Only fetch ride details, don't move camera
-      Future.microtask(() {
-        _fetchRideDetails();
-        // Removed camera movement code
-      });
-    }
   }
 
   void _dismissRequest() {
@@ -994,12 +977,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
           // NEW LINE: Only announce when going from no request to having a request while online
           _announceNewRideRequest();
-          
-          // Clear any existing polylines to ensure no routes are shown
-          _polylines.clear();
-          
-          // Ensure no loading indicator is shown
-          _isDirectionsLoading = false;
         } else {
           // Dismiss the request card if it was showing
           if (_requestCardController.value > 0) {
@@ -1020,11 +997,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             destination: "KL Sentral, Kuala Lumpur",
             fareAmount: "RM 25.50",
             paymentMethod: "Cash",
-            // Don't set static values for these - they'll be updated by _fetchRideDetails
-            driverToPickupDistance: _driverToPickupDistance,
-            pickupToDestinationDistance: _tripDistance,
-            estimatedPickupTime: _estimatedPickupTime,
-            estimatedTripDuration: _estimatedTripDuration);
+            // Separate distances for driver-to-pickup and pickup-to-destination
+            driverToPickupDistance: "3.7 km",
+            pickupToDestinationDistance: "15.2 km",
+            // Separate time estimates for pickup and trip duration
+            estimatedPickupTime: "5 minutes",
+            estimatedTripDuration: "25 minutes");
       } else {
         // Just update the basic status when offline or no active request
         audioProcessingService.updateGeminiPromptContext(
@@ -1033,15 +1011,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         );
       }
     });
-    
-    // Fetch ride details when a new request is created
-    if (hasActiveRequest && _currentPosition != null) {
-      // Only fetch ride details, don't move camera
-      Future.microtask(() {
-        _fetchRideDetails();
-        // Removed camera movement code
-      });
-    }
   }
 
   // Update _toggleOnlineStatus method to use the helper method
@@ -1069,28 +1038,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         if (_requestCardController.isCompleted) {
           _requestCardController.reset();
         }
-        
-        // If there's no current position yet, use a default position for Kuala Lumpur
-        // This ensures the first request has data even if location isn't fully initialized
-        if (_currentPosition == null) {
-          print("Setting default position for first request");
-          _currentPosition = LocationData.fromMap({
-            'latitude': 3.1390, // KL coordinates
-            'longitude': 101.6869,
-            'accuracy': 10.0,
-            'altitude': 0.0,
-            'speed': 0.0,
-            'speed_accuracy': 0.0,
-            'heading': 0.0,
-            'time': DateTime.now().millisecondsSinceEpoch.toDouble(),
-            'isMock': true,
-            'verticalAccuracy': 0.0,
-            'headingAccuracy': 0.0,
-            'elapsedRealtimeNanos': 0.0,
-          });
-          _updateDriverLocationMarker();
-        }
-        
+
         // Going online - show request card with animation after a short delay
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted && _isOnline) {
@@ -1151,9 +1099,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         print(
             "✅ GOT REAL LOCATION: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
 
-        // Mark that we've successfully initialized location
-        _hasInitializedLocation = true;
-        
         // Update UI
         if (mounted) {
           setState(() {
@@ -1170,7 +1115,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         print("❌ Error getting REAL location: $e");
       }
 
-      // We no longer set up continuous updates here, just get location once
+      // Set up continuous updates with the REAL position
+      _setupLocationUpdates();
     } catch (e) {
       print("❌ Error in location initialization: $e");
     }
@@ -1542,38 +1488,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
     final driverPosition =
         LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-    
-    // If there's an active request, we need to adjust the camera position 
-    // to account for the request card at the bottom of the screen
-    if (_hasActiveRequest && !_isNavigationMode) {
-      // Use camera target with padding to adjust for the request card
-      _mapController!.animateCamera(
-        CameraUpdate.newLatLngBounds(
-          LatLngBounds(
-            southwest: LatLng(
-              driverPosition.latitude - 0.0005, 
-              driverPosition.longitude - 0.0005
-            ),
-            northeast: LatLng(
-              driverPosition.latitude + 0.0005, 
-              driverPosition.longitude + 0.0005
-            ),
-          ),
-          100, // Add padding of 100 at the bottom for the request card
+
+    _mapController!.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: driverPosition,
+          zoom: 16.0,
+          bearing: 0.0,
         ),
-      );
-    } else {
-      // Normal camera centering without card adjustment
-      _mapController!.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: driverPosition,
-            zoom: 16.0,
-            bearing: 0.0,
-          ),
-        ),
-      );
-    }
+      ),
+    );
   }
 
   // Helper method to get flag asset based on country
@@ -1811,6 +1735,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
 // Replace your announceNewRideRequest method with this implementation
+// Replace the _announceNewRideRequest method with this implementation
   void _announceNewRideRequest() {
     // Don't announce if user is already recording something
     if (_isRecording || _isProcessing) return;
@@ -1829,9 +1754,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     print("Speaking ride request announcement");
     _flutterTts.speak("There's a new ride request. Would you like to accept?");
 
-    // Instead of relying on completion callback, calculate approximate duration
-    // Average speaking rate is ~150 words per minute = 2.5 words per second
-    // Our message is ~10 words, so around 4 seconds plus a small buffer
+    // Calculate approximate duration for the speech
     final speechDuration = const Duration(milliseconds: 2700);
 
     // Schedule voice listener to start after the speech should complete
@@ -1855,212 +1778,28 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   Future<void> _startVoiceResponseListener() async {
     try {
-      print('\n=== Listening for ride acceptance ===');
+      // Start recording using AudioProcessingService
+      File? tempFile =
+          await audioProcessingService.startRideResponseRecording();
 
-      // Cancel any existing timers first
-      _amplitudeTimer?.cancel();
-      _amplitudeTimer = null;
-
-      if (!await _recorder.hasPermission()) {
-        throw Exception('Microphone permission denied');
+      if (tempFile == null) {
+        throw Exception('Failed to create recording file');
       }
 
-      final path = await _getTempFilePath();
-      print('Recording path for ride response: $path');
+      setState(() {
+        _isRecording = true;
+      });
 
-      // Start recording with optimized settings
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          bitRate: 768000,
-          sampleRate: 48000,
-          numChannels: 2,
-        ),
-        path: path,
-      );
-
-      print('Ride response listening started');
-
-      // Set recording state variables
-      _isRecording = true;
-      _hasDetectedSpeech = false;
-      _silenceCount = 0;
-      _silenceDuration = PRE_SPEECH_SILENCE_COUNT;
-      _lastAmplitude = -30.0;
-      _currentAmplitude = -30.0;
-
-      print("Starting amplitude monitoring for ride response...");
-      _startRideResponseAmplitudeMonitoring();
-
-      // When silence is detected, stop and process
-      // You likely already call _stopRideResponseRecordingAndProcess from amplitude monitoring
-      // So, update that method as follows:
+      // Start amplitude monitoring to detect speech end
+      audioProcessingService.startRideResponseAmplitudeMonitoring(() {
+        _stopRideResponseRecordingAndProcess();
+      });
     } catch (e) {
       print('Error in _startVoiceResponseListener: $e');
-      _isRecording = false;
-    }
-  }
-
-// Add a specialized amplitude monitoring method for ride responses
-  void _startRideResponseAmplitudeMonitoring() {
-    // Ensure we don't have multiple timers
-    _amplitudeTimer?.cancel();
-
-    int readingsToSkip = 2;
-    _amplitudeTimer =
-        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      if (!_isRecording) {
-        print("Recording stopped, cancelling amplitude timer");
-        timer.cancel();
-        return;
-      }
-
-      try {
-        final amplitude = await _recorder.getAmplitude();
-        double newAmplitude = amplitude.current;
-
-        // Skip invalid amplitude values
-        if (newAmplitude.isInfinite || newAmplitude.isNaN) {
-          print('⚠️ Skipping invalid amplitude value');
-          return;
-        }
-
-        _currentAmplitude = newAmplitude;
-
-        // Handle initial readings
-        if (readingsToSkip > 0) {
-          _lastAmplitude = _currentAmplitude;
-          readingsToSkip--;
-          return;
-        }
-
-        // Amplitude analysis
-        double percentageChange = 0.0;
-        if (_lastAmplitude.abs() > 0.001 && !_lastAmplitude.isInfinite) {
-          percentageChange =
-              ((_currentAmplitude - _lastAmplitude) / _lastAmplitude.abs()) *
-                  100;
-          percentageChange = percentageChange.clamp(-1000.0, 1000.0);
-
-          // Speech detection
-          if (percentageChange.abs() > AMPLITUDE_CHANGE_THRESHOLD) {
-            if (!_hasDetectedSpeech) {
-              print('Speech detected in ride response');
-              _hasDetectedSpeech = true;
-              _silenceDuration = POST_SPEECH_SILENCE_COUNT;
-            }
-            _silenceCount = 0;
-          }
-          // Silence detection
-          else if (_currentAmplitude < SILENCE_THRESHOLD) {
-            _silenceCount++;
-            if (_silenceCount >= _silenceDuration) {
-              print('Recording stopped - Silence duration reached');
-              timer.cancel();
-              _stopRideResponseRecordingAndProcess();
-            }
-          } else {
-            _silenceCount = 0;
-          }
-
-          _lastAmplitude = _currentAmplitude;
-        }
-      } catch (e) {
-        print('❌ Error in amplitude monitoring: $e');
-      }
-    });
-  }
-
-// Add method to process the transcription for ride responses
-  void _processRideResponseTranscription(String transcription) {
-    print("Processing ride response: $transcription");
-
-    // Set processing to false
-    _isProcessing = false;
-
-    // Simple keyword matching for yes/no responses
-    final yesKeywords = [
-      'yes',
-      'yeah',
-      'yep',
-      'accept',
-      'sure',
-      'okay',
-      'ok',
-      'fine',
-      'alright'
-    ];
-    final noKeywords = [
-      'no',
-      'nope',
-      'decline',
-      'reject',
-      'don\'t',
-      'dont',
-      'not',
-      'cancel'
-    ];
-
-    // Check if transcription contains yes keywords
-    bool containsYes =
-        yesKeywords.any((keyword) => transcription.contains(keyword));
-
-    // Check if transcription contains no keywords
-    bool containsNo =
-        noKeywords.any((keyword) => transcription.contains(keyword));
-
-    if (containsYes && !containsNo) {
-      // User wants to accept the ride
-      _speakResponse("Accepting ride request").then((_) {
-        if (mounted) {
-          _acceptRideRequest();
-        }
-      });
-    } else if (containsNo) {
-      // User wants to decline the ride
-      _speakResponse("Declining ride request").then((_) {
-        if (mounted) {
-          // Dismiss the request
-          _dismissRequest();
-
-          // Show a snackbar confirming the decline
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Ride declined'),
-              duration: Duration(seconds: 2),
-              backgroundColor: Colors.red,
-            ),
-          );
-
-          // Simulate new request after a delay
-          Future.delayed(const Duration(seconds: 3), () {
-            if (_isOnline && mounted) {
-              _showNewRequest();
-            }
-          });
-        }
+      setState(() {
+        _isRecording = false;
       });
     }
-
-    // Reset the transcription complete callback to the default one
-    audioProcessingService.onTranscriptionComplete =
-        (String baseText, String fineTunedText, String geminiResponse) {
-      if (mounted) {
-        setState(() {
-          _geminiResponse = geminiResponse;
-          _isProcessing = false;
-          // Store this exchange in the current conversation history
-          _sessionConversationHistory
-              .add({'user': fineTunedText, 'assistant': geminiResponse});
-
-          // This is critical - update the stream to notify UI
-          _geminiStreamController.add(geminiResponse);
-        });
-
-        // Optional: Speak the response
-        _speakResponse(geminiResponse);
-      }
-    };
   }
 
   Widget _buildRequestCard() {
@@ -2373,7 +2112,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                               _buildNavigationAction(
                                 icon: Icons.message,
                                 label: 'Message',
-                                onTap: _showSimpleMessageDialog,
+                                onTap: () {},
                               ),
                             ],
                           ),
@@ -2668,9 +2407,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             ),
           ),
 
-          // Camera lock button
-          // Removed as requested
-
           // Zoom controls in a separate container
           Container(
             decoration: BoxDecoration(
@@ -2896,8 +2632,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               _buildDraggableVoiceButton(),
 
               // Add loading indicator when directions are being fetched
-              // Only show loading when in navigation mode, not for regular requests
-              if (_isDirectionsLoading && _isNavigationMode)
+              if (_isDirectionsLoading)
                 Container(
                   color: Colors.black.withOpacity(0.3),
                   child: const Center(
@@ -3270,11 +3005,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
           // Simulate call intent
           _showCallDialog();
           break;
-        
-        case 'message_passenger':
-          // Simulate message intent
-          _showSimpleMessageDialog();
-          break;
 
         case 'cancel_ride':
           _showCancelConfirmation();
@@ -3295,149 +3025,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             child: const Text('CANCEL'),
           ),
         ],
-      ),
-    );
-  }
-
-  void _showSimpleMessageDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Message Passenger'),
-        content: const Text('Messaging Ahmad...'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ignore: unused_element
-  void _showMessageDialog() {
-    // Get theme mode
-    final isDarkMode =
-        Provider.of<ThemeProvider>(context, listen: false).isDarkMode;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: isDarkMode ? const Color(0xFF252525) : Colors.white,
-        title: Text(
-          'Message Passenger',
-          style: TextStyle(
-            color: isDarkMode ? Colors.white : Colors.black,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Type your message here...',
-                hintStyle: TextStyle(
-                  color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                    color: isDarkMode ? Colors.grey.shade700 : Colors.grey.shade300,
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                    color: isDarkMode ? Colors.grey.shade700 : Colors.grey.shade300,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(
-                    color: AppTheme.grabGreen,
-                  ),
-                ),
-                filled: true,
-                fillColor: isDarkMode ? const Color(0xFF333333) : Colors.grey.shade50,
-              ),
-              style: TextStyle(
-                color: isDarkMode ? Colors.white : Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildQuickMessage(isDarkMode, 'I\'ll be there in 5 mins'),
-                _buildQuickMessage(isDarkMode, 'I\'ve arrived'),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildQuickMessage(isDarkMode, 'I\'m waiting outside'),
-                _buildQuickMessage(isDarkMode, 'Where are you?'),
-              ],
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'CANCEL',
-              style: TextStyle(
-                color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Show a confirmation message
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Message sent to passenger'),
-                  duration: Duration(seconds: 2),
-                  backgroundColor: AppTheme.grabGreen,
-                ),
-              );
-            },
-            child: const Text(
-              'SEND',
-              style: TextStyle(color: AppTheme.grabGreen),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuickMessage(bool isDarkMode, String message) {
-    return InkWell(
-      onTap: () {
-        // In a real app, this would auto-fill the message text field
-      },
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isDarkMode ? const Color(0xFF333333) : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isDarkMode ? Colors.grey.shade700 : Colors.grey.shade300,
-          ),
-        ),
-        child: Text(
-          message,
-          style: TextStyle(
-            fontSize: 12,
-            color: isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
-          ),
-        ),
       ),
     );
   }
@@ -3548,7 +3135,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Method to cancel the trip (used from the cancel dialog)
+  // Method to cancel the trip and exit navigation mode
   void _cancelTrip() {
     // Speak confirmation of cancellation
     _speakResponse("Trip cancelled.");
@@ -3560,40 +3147,32 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _hasPickedUpPassenger = false;
       _navigationSteps.clear();
       _currentNavigationStep = 0;
-      
-      // Unlock camera when navigation ends
-      _lockCameraPosition(false);
 
       // Clear navigation route
       _polylines.clear();
-      
-      // Keep only the driver marker
+
+      // Reset markers except for driver location
       _markers.clear();
-      if (_currentPosition != null) {
-        // Update driver marker
-        _updateDriverLocationMarker();
+      if (_driverLocationMarker != null) {
+        _markers.add(_driverLocationMarker!);
       }
     });
 
-    // Get a fresh location update before focusing on it
-    _updateDriverLocation().then((_) {
-      // Focus back on device's current location
-      if (_mapController != null && _currentPosition != null) {
-        final driverPosition =
-            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+    // Focus back on device's current location
+    if (_mapController != null && _currentPosition != null) {
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-        // Animate camera to focus on driver's current location with appropriate zoom level
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: driverPosition,
-              zoom: 15, // Standard zoom level for city navigation
-              bearing: 0.0, // Reset bearing to north
-            ),
+      // Animate camera to focus on driver's current location with appropriate zoom level
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: driverPosition,
+            zoom: 15, // Standard zoom level for city navigation
           ),
-        );
-      }
-    });
+        ),
+      );
+    }
 
     // Show cancellation message
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3616,15 +3195,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
               backgroundColor: AppTheme.grabGreen,
             ),
           );
-          
-          // Show a new request after the ready message
-          if (_isOnline && mounted) {
-            Future.delayed(const Duration(seconds: 3), () {
-              if (mounted && _isOnline) {
-                _showNewRequest();
-              }
-            });
-          }
+        }
+      });
+
+      // Show a new order request after a short delay
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _isOnline) {
+          _showNewRequest();
         }
       });
     }
@@ -3649,62 +3226,39 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     // We only want to save positions that the user has explicitly set
   }
 
-  // Replace the existing _setupLocationUpdates method
-  
   void _setupLocationUpdates() {
-    // If we've already initialized the location, don't do it again
-    if (_hasInitializedLocation) {
-      print("🔍 Location already initialized, skipping updates");
-      return;
-    }
-    
-      try {
-        // Only get the location once instead of continuously listening
-      _location.getLocation().then((currentLocation) {
-          if (mounted) {
-            // Verify we got real coordinates
-            if (currentLocation.latitude != null &&
+    try {
+      _location.onLocationChanged.listen((LocationData currentLocation) {
+        if (mounted) {
+          // Verify we got real coordinates
+          if (currentLocation.latitude != null &&
               currentLocation.longitude != null) {
-              print(
-                "📍 REAL LOCATION OBTAINED: ${currentLocation.latitude}, ${currentLocation.longitude}");
-  
-              // Check if this is the initial position (KL coordinates)
-              bool isDefaultPosition =
-                  (currentLocation.latitude! - 3.1390).abs() < 0.0001 &&
-                      (currentLocation.longitude! - 101.6869).abs() < 0.0001;
-  
-              if (isDefaultPosition) {
-                print("⚠️ IGNORING default position update");
-                return; // Skip updating with default position
-              }
-            
-            // Mark that we've successfully initialized location
-            _hasInitializedLocation = true;
-  
-              setState(() {
-                _currentPosition = currentLocation;
-  
-                // Update only the marker with real position
-                _updateDriverMarkerOnly();
-              });
-            
-            // Only update camera if not locked and it's the first location update
-            if (!_cameraLocked && _mapController != null) {
-              final driverPosition = LatLng(
-                  currentLocation.latitude!, currentLocation.longitude!);
-              _mapController!.animateCamera(
-                CameraUpdate.newLatLng(driverPosition)
-              );
-              }
+            print(
+                "📍 REAL LOCATION UPDATE: ${currentLocation.latitude}, ${currentLocation.longitude}");
+
+            // Check if this is the initial position (KL coordinates)
+            bool isDefaultPosition =
+                (currentLocation.latitude! - 3.1390).abs() < 0.0001 &&
+                    (currentLocation.longitude! - 101.6869).abs() < 0.0001;
+
+            if (isDefaultPosition) {
+              print("⚠️ IGNORING default position update");
+              return; // Skip updating with default position
             }
+
+            setState(() {
+              _currentPosition = currentLocation;
+
+              // Update only the marker with real position
+              _updateDriverMarkerOnly();
+            });
+          }
         }
-      }).catchError((e) {
-        print("❌ Error getting location: $e");
-        });
-      } catch (e) {
-        print("❌ Error setting up location updates: $e");
-      }
+      });
+    } catch (e) {
+      print("❌ Error setting up location updates: $e");
     }
+  }
 
   void _updateDriverMarkerOnly() {
     if (_currentPosition == null) return;
@@ -3751,7 +3305,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   // Add a method to accept the ride request
-  void _acceptRideRequest() async {
+  void _acceptRideRequest() {
     if (_hasActiveRequest) {
       setState(() {
         _hasActiveRequest = false;
@@ -3761,18 +3315,24 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _isNavigatingToDestination = false;
         _hasPickedUpPassenger = false;
         _currentNavigationStep = 0;
-        
-        // Lock camera when starting navigation
-        _lockCameraPosition(true);
+
+        _geminiService.updatePromptContext(
+          isOnline: _isOnline,
+          hasActiveRequest: false,
+          pickupLocation: _pickupLocation,
+          destination: _destination,
+          paymentMethod: _paymentMethod,
+          fareAmount: _fareAmount,
+          tripDistance: _tripDistance,
+          estimatedPickupTime: _estimatedPickupTime,
+          estimatedTripDuration: _estimatedTripDuration,
+        );
       });
 
-      // Remove TTS for accepting the order
-      // _speakResponse(
-      //    "Order accepted. Starting navigation to pickup location at ${_pickupLocation}.");
+      // Speak confirmation of accepting the order
+      _speakResponse(
+          "Order accepted. Starting navigation to pickup location at ${_pickupLocation}.");
 
-      // Get a fresh location update when accepting a ride
-      await _updateDriverLocation();
-      
       // Get pickup and destination coordinates for routing
       if (_currentPosition != null) {
         final driverPosition =
@@ -4064,7 +3624,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _markers.clear();
       _polylines.clear();
 
-      // Add driver's current location marker (now at pickup)
+      // Add pickup location marker (green)
       _driverLocationMarker = Marker(
         markerId: const MarkerId('driver_location'),
         position: pickupPosition, // Position at pickup location
@@ -4097,21 +3657,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
     // Fit both markers on the map
     _fitMarkersOnMap([pickupPosition, destinationPosition]);
-
-    // Update current position to be at pickup location
-    setState(() {
-      // Override the current position data for navigation purposes
-      // This makes sure that even when we fetch ride details, we'll show correct route
-      _currentPosition = LocationData.fromMap({
-        "latitude": pickupPosition.latitude,
-        "longitude": pickupPosition.longitude,
-        "accuracy": 0.0,
-        "altitude": 0.0,
-        "speed": 0.0,
-        "speed_accuracy": 0.0,
-        "heading": 0.0,
-      });
-    });
 
     // Fetch updated route details for destination
     _fetchRideDetails();
@@ -4171,40 +3716,32 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _hasPickedUpPassenger = false;
       _navigationSteps.clear();
       _currentNavigationStep = 0;
-      
-      // Unlock camera when trip ends
-      _lockCameraPosition(false);
 
       // Clear navigation route
       _polylines.clear();
-      
-      // Keep only the driver marker
+
+      // Reset markers except for driver location
       _markers.clear();
-      if (_currentPosition != null) {
-        // Update driver marker
-        _updateDriverLocationMarker();
+      if (_driverLocationMarker != null) {
+        _markers.add(_driverLocationMarker!);
       }
     });
 
-    // Get a fresh location update before focusing on it
-    _updateDriverLocation().then((_) {
-      // Focus back on device's current location
-      if (_mapController != null && _currentPosition != null) {
-        final driverPosition =
-            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+    // Focus back on device's current location
+    if (_mapController != null && _currentPosition != null) {
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
 
-        // Animate camera to focus on driver's current location with appropriate zoom level
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: driverPosition,
-              zoom: 15, // Standard zoom level for city navigation
-              bearing: 0.0, // Reset bearing to north
-            ),
+      // Animate camera to focus on driver's current location with appropriate zoom level
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: driverPosition,
+            zoom: 15, // Standard zoom level for city navigation
           ),
-        );
-      }
-    });
+        ),
+      );
+    }
 
     // Show a brief message to indicate the driver is available for new orders
     ScaffoldMessenger.of(context).showSnackBar(
@@ -4227,12 +3764,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   // Fetch accurate ride details from API
   Future<void> _fetchRideDetails() async {
-    // Only show loading indicator when in navigation mode, not for regular requests
-    if (_isNavigationMode) {
-      setState(() {
-        _isDirectionsLoading = true;
-      });
-    }
+    setState(() {
+      _isDirectionsLoading = true;
+    });
 
     try {
       if (_currentPosition == null) {
@@ -4252,201 +3786,47 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       final LatLng destinationPosition =
           LatLng(3.1348, 101.6867); // Actual KL Sentral coordinates
 
-      // Get API key from environment variables
-      final apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+      // Calculate distances using the Haversine formula
+      final double driverToPickupDistance =
+          _calculateDistance(driverPosition, pickupPosition);
+      final double pickupToDestinationDistance =
+          _calculateDistance(pickupPosition, destinationPosition);
 
-      // Different API calls based on navigation state
-      if (_isNavigatingToPickup) {
-        // When navigating to pickup, only need driver->pickup route
-        final String driverToPickupUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
-            'origin=${driverPosition.latitude},${driverPosition.longitude}'
-            '&destination=${pickupPosition.latitude},${pickupPosition.longitude}'
-            '&mode=driving'
-            '&key=$apiKey';
+      // Update the UI with accurate information
+      setState(() {
+        _driverToPickupDistance =
+            "${driverToPickupDistance.toStringAsFixed(1)} km";
+        _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
 
-        final driverToPickupResponse = await http.get(Uri.parse(driverToPickupUrl));
-        final driverToPickupData = json.decode(driverToPickupResponse.body);
+        // Estimate pickup time based on average speed of 40 km/h
+        final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
+        _estimatedPickupTime = "$pickupMinutes min";
 
-        if (driverToPickupResponse.statusCode == 200 && driverToPickupData['status'] == 'OK') {
-          final driverToPickupRoutes = driverToPickupData['routes'] as List;
-          
-          if (driverToPickupRoutes.isNotEmpty) {
-            final driverToPickupLeg = driverToPickupRoutes[0]['legs'][0];
-            final String driverToPickupDistance = driverToPickupLeg['distance']['text'];
-            final String pickupETA = driverToPickupLeg['duration']['text'];
-            
-            // Update the UI with pickup information
-            setState(() {
-              _driverToPickupDistance = driverToPickupDistance;
-              _estimatedPickupTime = pickupETA;
-              _isDirectionsLoading = false;
-            });
-            
-            // Only show route to pickup
-            _showRouteToPickup();
-          } else {
-            _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
-          }
-        } else {
-          _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
-        }
-      } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
-        // After pickup confirmed - only need pickup->destination route
-        final String pickupToDestinationUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
-            'origin=${pickupPosition.latitude},${pickupPosition.longitude}'
-            '&destination=${destinationPosition.latitude},${destinationPosition.longitude}'
-            '&mode=driving'
-            '&key=$apiKey';
+        // Estimate trip duration based on average speed of 35 km/h (accounting for traffic)
+        final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
+        _estimatedTripDuration = "$tripMinutes min";
 
-        final pickupToDestinationResponse = await http.get(Uri.parse(pickupToDestinationUrl));
-        final pickupToDestinationData = json.decode(pickupToDestinationResponse.body);
+        _isDirectionsLoading = false;
+      });
 
-        if (pickupToDestinationResponse.statusCode == 200 && pickupToDestinationData['status'] == 'OK') {
-          final pickupToDestinationRoutes = pickupToDestinationData['routes'] as List;
-          
-          if (pickupToDestinationRoutes.isNotEmpty) {
-            final pickupToDestinationLeg = pickupToDestinationRoutes[0]['legs'][0];
-            final String pickupToDestinationDistance = pickupToDestinationLeg['distance']['text'];
-            final String tripDuration = pickupToDestinationLeg['duration']['text'];
-            
-            // Update the UI with destination information
-            setState(() {
-              _tripDistance = pickupToDestinationDistance;
-              _estimatedTripDuration = tripDuration;
-              _isDirectionsLoading = false;
-            });
-
-            // Show route to destination only - don't include driver to pickup anymore
-            _setupRouteDisplay(
-                pickupPosition, pickupPosition, destinationPosition);
-          } else {
-            _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
-          }
-        } else {
-          _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
-        }
-      } else {
-        // Both API calls for initial request display (not in navigation mode yet)
-        final String driverToPickupUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
-            'origin=${driverPosition.latitude},${driverPosition.longitude}'
-            '&destination=${pickupPosition.latitude},${pickupPosition.longitude}'
-            '&mode=driving'
-            '&key=$apiKey';
-
-        final String pickupToDestinationUrl = 'https://maps.googleapis.com/maps/api/directions/json?'
-            'origin=${pickupPosition.latitude},${pickupPosition.longitude}'
-            '&destination=${destinationPosition.latitude},${destinationPosition.longitude}'
-            '&mode=driving'
-            '&key=$apiKey';
-
-        // Make both API calls in parallel
-        final driverToPickupResponse = http.get(Uri.parse(driverToPickupUrl));
-        final pickupToDestinationResponse = http.get(Uri.parse(pickupToDestinationUrl));
-
-        // Wait for both responses
-        final responses = await Future.wait([driverToPickupResponse, pickupToDestinationResponse]);
-        
-        final driverToPickupData = json.decode(responses[0].body);
-        final pickupToDestinationData = json.decode(responses[1].body);
-
-        // Process responses as before for initial ride request
-        if (responses[0].statusCode == 200 && 
-            responses[1].statusCode == 200 &&
-            driverToPickupData['status'] == 'OK' &&
-            pickupToDestinationData['status'] == 'OK') {
-          
-          final driverToPickupRoutes = driverToPickupData['routes'] as List;
-          final pickupToDestinationRoutes = pickupToDestinationData['routes'] as List;
-
-          if (driverToPickupRoutes.isNotEmpty && pickupToDestinationRoutes.isNotEmpty) {
-            // Get distance and duration from driver to pickup
-            final driverToPickupLeg = driverToPickupRoutes[0]['legs'][0];
-            final String driverToPickupDistance = driverToPickupLeg['distance']['text'];
-            final String pickupETA = driverToPickupLeg['duration']['text'];
-            
-            // Get distance and duration from pickup to destination
-            final pickupToDestinationLeg = pickupToDestinationRoutes[0]['legs'][0];
-            final String pickupToDestinationDistance = pickupToDestinationLeg['distance']['text'];
-            final String tripDuration = pickupToDestinationLeg['duration']['text'];
-
-            // Update the UI with accurate information from Google Maps API
-            setState(() {
-              _driverToPickupDistance = driverToPickupDistance;
-              _tripDistance = pickupToDestinationDistance;
-              _estimatedPickupTime = pickupETA;
-              _estimatedTripDuration = tripDuration;
-              _isDirectionsLoading = false;
-            });
-
-            // Show route on map if in navigation mode
-            if (_isNavigationMode) {
-              if (_isNavigatingToPickup) {
-                _showRouteToPickup();
-              } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
-                _setupRouteDisplay(
-                    pickupPosition, pickupPosition, destinationPosition);
-              }
-            }
-          } else {
-            _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
-          }
-        } else {
-          _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
+      // Only show route on map if we're not already in destination navigation mode
+      // This prevents redrawing the route after pickup
+      if (!(_isNavigatingToDestination && _hasPickedUpPassenger)) {
+        // Show route on map - using different methods based on phase
+        if (_isNavigatingToPickup) {
+          // During pickup phase, we can use the specialized method for pickup route
+          _showRouteToPickup();
+        } else if (!_isNavigationMode) {
+          // For full route display with all markers, but only if not in navigation mode
+          _setupRouteDisplay(
+              driverPosition, pickupPosition, destinationPosition);
         }
       }
     } catch (e) {
-      print('Error fetching ride details: $e');
-      
-      if (_currentPosition != null) {
-        final driverPosition =
-            LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-        final LatLng pickupPosition =
-            LatLng(3.0733, 101.6073);
-        final LatLng destinationPosition =
-            LatLng(3.1348, 101.6867);
-            
-        _fallbackToBasicDistanceCalculation(driverPosition, pickupPosition, destinationPosition);
-      }
-      
       setState(() {
         _isDirectionsLoading = false;
       });
-    }
-  }
-
-  // Fallback method for calculating distances when API calls fail
-  void _fallbackToBasicDistanceCalculation(LatLng driverPosition, LatLng pickupPosition, LatLng destinationPosition) {
-    // Calculate distances using the Haversine formula
-    final double driverToPickupDistance =
-        _calculateDistance(driverPosition, pickupPosition);
-    final double pickupToDestinationDistance =
-        _calculateDistance(pickupPosition, destinationPosition);
-
-    // Update the UI with fallback information
-    setState(() {
-      _driverToPickupDistance =
-          "${driverToPickupDistance.toStringAsFixed(1)} km";
-      _tripDistance = "${pickupToDestinationDistance.toStringAsFixed(1)} km";
-
-      // Estimate pickup time based on average speed of 40 km/h
-      final int pickupMinutes = (driverToPickupDistance / 40 * 60).round();
-      _estimatedPickupTime = "$pickupMinutes min";
-
-      // Estimate trip duration based on average speed of 35 km/h (accounting for traffic)
-      final int tripMinutes = (pickupToDestinationDistance / 35 * 60).round();
-      _estimatedTripDuration = "$tripMinutes min";
-
-      _isDirectionsLoading = false;
-      
-      // Make sure no routes are shown for an active request that hasn't been accepted
-      if (_hasActiveRequest && !_isNavigationMode) {
-        _polylines.clear();
-      }
-    });
-    
-    // Focus camera on driver's position if there's an active request but not in navigation mode
-    if (_hasActiveRequest && !_isNavigationMode && _mapController != null) {
-      _centerMapOnDriverPosition();
+      print('Error fetching ride details: $e');
     }
   }
 
@@ -4521,74 +3901,47 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _markers.clear();
     _polylines.clear();
 
-    if (_isNavigatingToPickup) {
-      // During pickup phase - show driver location and pickup location
-      
-      // Add driver's current location marker
-      _driverLocationMarker = Marker(
-        markerId: const MarkerId('driver_location'),
-        position: driverPosition,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        infoWindow: const InfoWindow(title: 'Your Location'),
-        zIndex: 2, // Ensure driver marker is on top of other markers
-      );
+    // Add driver's current location marker
+    _driverLocationMarker = Marker(
+      markerId: const MarkerId('driver_location'),
+      position: driverPosition,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+      infoWindow: const InfoWindow(title: 'Your Location'),
+      zIndex: 2, // Ensure driver marker is on top of other markers
+    );
 
-      // Add pickup location marker
-      _pickupLocationMarker = Marker(
-        markerId: const MarkerId('pickup_location'),
-        position: pickupPosition,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
-      );
+    // Add pickup location marker
+    _pickupLocationMarker = Marker(
+      markerId: const MarkerId('pickup_location'),
+      position: pickupPosition,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+      infoWindow: InfoWindow(title: 'Pickup: $_pickupLocation'),
+    );
 
-      // Add destination marker (but don't draw route to it yet)
-      Marker destinationMarker = Marker(
-        markerId: const MarkerId('destination'),
-        position: destinationPosition,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: InfoWindow(title: 'Destination: $_destination'),
-      );
+    // Add destination marker
+    Marker destinationMarker = Marker(
+      markerId: const MarkerId('destination'),
+      position: destinationPosition,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+      infoWindow: InfoWindow(title: 'Destination: $_destination'),
+    );
 
-      // Add all markers to the map
-      _markers.add(_driverLocationMarker!);
-      _markers.add(_pickupLocationMarker!);
-      _markers.add(destinationMarker);
+    // Add all markers to the map
+    _markers.add(_driverLocationMarker!);
+    _markers.add(_pickupLocationMarker!);
+    _markers.add(destinationMarker);
 
-      // Create route from driver to pickup only
-      _createRouteLinePoints(
-          driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
-    } else if (_isNavigatingToDestination && _hasPickedUpPassenger) {
-      // After pickup phase - only show pickup location and destination
-      
-      // Use pickup location as the current position
-      _driverLocationMarker = Marker(
-        markerId: const MarkerId('driver_location'),
-        position: pickupPosition, // Driver is now at pickup location
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        infoWindow: const InfoWindow(title: 'Your Location'),
-        zIndex: 2,
-      );
+    // Create route polylines for driver to pickup and pickup to destination using API-based routing
+    _createRouteLinePoints(
+        driverPosition, pickupPosition, AppTheme.grabGreen, 'route_to_pickup');
+    _createRouteLinePoints(pickupPosition, destinationPosition,
+        AppTheme.grabGreen, 'route_to_destination');
 
-      // Add destination marker
-      Marker destinationMarker = Marker(
-        markerId: const MarkerId('destination'),
-        position: destinationPosition,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: InfoWindow(title: 'Destination: $_destination'),
-      );
-
-      // Only add current position and destination markers
-      _markers.add(_driverLocationMarker!);
-      _markers.add(destinationMarker);
-
-      // Only create route from pickup to destination
-      _createRouteLinePoints(pickupPosition, destinationPosition, 
-          AppTheme.grabGreen, 'route_to_destination');
-    }
+    // Fit all markers on the map
+    _fitAllMarkersOnMap();
   }
 
   // Fit all markers on the map
-  // ignore: unused_element
   void _fitAllMarkersOnMap() {
     if (_mapController == null || _markers.isEmpty) return;
 
@@ -4901,7 +4254,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                           _buildNavigationAction(
                             icon: Icons.message,
                             label: 'Message',
-                            onTap: _showSimpleMessageDialog,
+                            onTap: () {},
                           ),
                           if (_isNavigatingToPickup)
                             _buildNavigationAction(
@@ -5163,58 +4516,21 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   void _moveToCurrentLocation() async {
     if (_mapController != null && _currentPosition != null) {
-      // Get the current driver position
-      LatLng driverPosition;
-      
-      // If there's an active request, adjust the latitude by -0.005
-      if (_hasActiveRequest) {
-        driverPosition = LatLng(
-          _currentPosition!.latitude! - 0.0010, // Adjust latitude by -0.005
-          _currentPosition!.longitude!
-        );
-        print("🎯 Request active: Adjusting latitude by -0.0010");
-      } else {
-        driverPosition = LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-      }
-      
-      // If there's an active request but not in navigation mode, adjust the camera view
-      // to account for the request card at the bottom of the screen
-      if (_hasActiveRequest && !_isNavigationMode) {
-        print("🎯 Request active: Using bounds with padding to account for request card");
-        
-        // Use bounds approach with padding to position the driver properly
-        _mapController!.animateCamera(
-          CameraUpdate.newLatLngBounds(
-            LatLngBounds(
-              southwest: LatLng(
-                driverPosition.latitude - 0.0005, 
-                driverPosition.longitude - 0.0005
-              ),
-              northeast: LatLng(
-                driverPosition.latitude + 0.0005, 
-                driverPosition.longitude + 0.0005
-              ),
-            ),
-            120, // Add padding to account for the request card
+      final driverPosition =
+          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
+
+      print(
+          "🎯 Explicitly moving to user location: ${driverPosition.latitude}, ${driverPosition.longitude}");
+
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: driverPosition,
+            zoom: 16.0,
+            bearing: 0.0,
           ),
-        );
-      } else {
-        // Standard camera positioning when no request card is showing
-        print("🎯 Moving to location: ${driverPosition.latitude}, ${driverPosition.longitude}, zoom: 16.0");
-        
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: driverPosition,
-              zoom: 16.0, // Always use zoom level 16
-              bearing: 0.0,
-            ),
-          ),
-        );
-      }
-      
-      // Fetch weather data for the current location
-      _fetchWeatherData();
+        ),
+      );
     }
   }
 
@@ -5310,20 +4626,20 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         onTimeout: () {
           print("Location timeout, using default");
           return LocationData.fromMap({
-          "latitude": 3.1390, 
-          "longitude": 101.6869,
-          "accuracy": 0.0,
-          "altitude": 0.0,
-          "speed": 0.0,
-          "speed_accuracy": 0.0,
-          "heading": 0.0,
-        });
+            "latitude": 3.1390,
+            "longitude": 101.6869,
+            "accuracy": 0.0,
+            "altitude": 0.0,
+            "speed": 0.0,
+            "speed_accuracy": 0.0,
+            "heading": 0.0,
+          });
         },
       );
-        
+
       // Update state to trigger a rebuild
-        if (mounted) {
-          setState(() {
+      if (mounted) {
+        setState(() {
           print(
               "Initial location set: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
         });
@@ -5422,29 +4738,5 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // Fall back to default position
       _positionVoiceButtonBottomRight();
     }
-  }
-
-  // Add this method to manually update location when needed
-  Future<LocationData?> _updateDriverLocation() async {
-    try {
-      // Get a fresh location update
-      LocationData currentLocation = await _location.getLocation();
-      
-      if (currentLocation.latitude != null && currentLocation.longitude != null) {
-        print("📍 Manual location update: ${currentLocation.latitude}, ${currentLocation.longitude}");
-        
-        setState(() {
-          _currentPosition = currentLocation;
-          // Update the marker with the new position
-          _updateDriverMarkerOnly();
-        });
-        
-        return currentLocation;
-      }
-    } catch (e) {
-      print("❌ Error updating driver location: $e");
-    }
-    
-    return null;
   }
 }
