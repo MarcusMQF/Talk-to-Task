@@ -706,9 +706,24 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   void _startRequestTimer() {
-    _remainingSeconds = 15;
+    // Cancel any existing timer to prevent duplicates
     _requestTimer?.cancel();
+    _requestTimer = null;
+    
+    // Reset timer values
+    _remainingSeconds = 15;
+    
+    // Stop any ongoing animations and reset them
+    _timerGlowController.reset();
+    _timerShakeController.reset();
+    
+    // Create a new periodic timer
     _requestTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
       setState(() {
         if (_remainingSeconds > 0) {
           _remainingSeconds--;
@@ -727,7 +742,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
           // Simulate new request after timeout
           Future.delayed(const Duration(seconds: 2), () {
-            if (_isOnline) {
+            if (mounted && _isOnline) {
               _showNewRequest();
             }
           });
@@ -746,12 +761,29 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         hasActiveRequest: _hasActiveRequest,
       );
 
+      // Reset animation controller to ensure it starts from scratch
+      _requestCardController.reset();
+      
+      // Animate the request card sliding up
       _requestCardController.forward(from: 0.0);
+      
+      // Reset timer values
+      _remainingSeconds = 15;
+      
+      // Start a fresh timer
       _startRequestTimer();
     });
   }
 
   void _dismissRequest() {
+    // Cancel any existing timer
+    _requestTimer?.cancel();
+    _requestTimer = null;
+    
+    // Reset timer animations
+    _timerGlowController.reset();
+    _timerShakeController.reset();
+    
     // Make sure controller is initialized before animating
     if (!_requestCardController.isAnimating) {
       _requestCardController.reverse().then((_) {
@@ -776,10 +808,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // If going offline, there cannot be active requests
       if (!_isOnline) {
         _hasActiveRequest = false;
-        if (hasActiveRequest) {
-          // If there was an active request, dismiss it
+        if (_requestTimer != null) {
+          _requestTimer!.cancel();
+          _requestTimer = null;
+        }
+        // If there was an active request, dismiss it
+        if (_requestCardController.value > 0) {
           _dismissRequest();
-          _requestTimer?.cancel();
         }
       } else {
         // If online, we can set the active request as requested
@@ -787,11 +822,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
         // Update UI based on new request state
         if (hasActiveRequest) {
-          // Only show request card animation if it wasn't already shown
-          if (!_requestCardController.isCompleted) {
-            _requestCardController.forward(from: 0.0);
-            _startRequestTimer();
-          }
+          // Make sure we start from a clean state
+          _requestCardController.reset();
+          
+          // Always show request card animation from the beginning
+          _requestCardController.forward(from: 0.0);
+          
+          // Ensure timer is reset and started fresh
+          _remainingSeconds = 15;
+          _startRequestTimer();
         } else {
           // Dismiss the request card if it was showing
           if (_requestCardController.value > 0) {
@@ -842,10 +881,24 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         hasActiveRequest: _hasActiveRequest,
       );
 
+      // Cancel any existing request timer
+      _requestTimer?.cancel();
+      
       if (_isOnline) {
+        // Reset timer values when going online to ensure fresh start
+        _remainingSeconds = 15;
+        
+        // Reset request card controller state
+        if (_requestCardController.isCompleted) {
+          _requestCardController.reset();
+        }
+        
         // Going online - show request card with animation after a short delay
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted && _isOnline) {
+            // Make sure we're starting from a known state
+            _hasActiveRequest = false;
+            // Show new request with fresh animation and timer
             _updateRideRequestState(true);
           }
         });
@@ -3168,7 +3221,6 @@ void _setupLocationUpdates() {
 
     // Reset the current step
     _currentNavigationStep = 0;
-
     // Speak the first instruction immediately
     if (_navigationSteps.isNotEmpty) {
       _speakNavigationInstruction(_navigationSteps[0]);
@@ -4455,3 +4507,4 @@ void _setupLocationUpdates() {
     }
   }
 }
+
