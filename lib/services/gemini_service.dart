@@ -1,12 +1,9 @@
-import 'dart:convert';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import '../api_keys.dart';
-import 'package:http/http.dart' as http;
 
 class GeminiService {
   late final GenerativeModel _model;
   late ChatSession? _chat;
-  final String _baseUrl = 'https://bc21-27-125-249-60.ngrok-free.app';
 
   // Added context variables for prompts
   bool _isOnline = true;

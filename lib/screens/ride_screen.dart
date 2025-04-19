@@ -144,6 +144,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Add this flag near the top of the class with other state variables
   bool _hasInitializedLocation = false;
 
+  // Add camera lock state
+  bool _cameraLocked = false;
+
   @override
   void initState() {
     super.initState();
@@ -1803,13 +1806,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _clearTtsCompletionHandler() {
-    print("Clearing previous TTS completion handlers");
-    _flutterTts.setCompletionHandler(() {
-      print("Empty handler triggered (should not see this)");
-    });
-  }
-
 // Replace your announceNewRideRequest method with this implementation
   void _announceNewRideRequest() {
     // Don't announce if user is already recording something
@@ -1972,96 +1968,6 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
 // Add method to process the transcription for ride responses
-  void _processRideResponseTranscription(String transcription) {
-    print("Processing ride response: $transcription");
-
-    // Set processing to false
-    _isProcessing = false;
-
-    // Simple keyword matching for yes/no responses
-    final yesKeywords = [
-      'yes',
-      'yeah',
-      'yep',
-      'accept',
-      'sure',
-      'okay',
-      'ok',
-      'fine',
-      'alright'
-    ];
-    final noKeywords = [
-      'no',
-      'nope',
-      'decline',
-      'reject',
-      'don\'t',
-      'dont',
-      'not',
-      'cancel'
-    ];
-
-    // Check if transcription contains yes keywords
-    bool containsYes =
-        yesKeywords.any((keyword) => transcription.contains(keyword));
-
-    // Check if transcription contains no keywords
-    bool containsNo =
-        noKeywords.any((keyword) => transcription.contains(keyword));
-
-    if (containsYes && !containsNo) {
-      // User wants to accept the ride
-      _speakResponse("Accepting ride request").then((_) {
-        if (mounted) {
-          _acceptRideRequest();
-        }
-      });
-    } else if (containsNo) {
-      // User wants to decline the ride
-      _speakResponse("Declining ride request").then((_) {
-        if (mounted) {
-          // Dismiss the request
-          _dismissRequest();
-
-          // Show a snackbar confirming the decline
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Ride declined'),
-              duration: Duration(seconds: 2),
-              backgroundColor: Colors.red,
-            ),
-          );
-
-          // Simulate new request after a delay
-          Future.delayed(const Duration(seconds: 3), () {
-            if (_isOnline && mounted) {
-              _showNewRequest();
-            }
-          });
-        }
-      });
-    }
-
-    // Reset the transcription complete callback to the default one
-    audioProcessingService.onTranscriptionComplete =
-        (String baseText, String fineTunedText, String geminiResponse) {
-      if (mounted) {
-        setState(() {
-          _geminiResponse = geminiResponse;
-          _isProcessing = false;
-          // Store this exchange in the current conversation history
-          _sessionConversationHistory
-              .add({'user': fineTunedText, 'assistant': geminiResponse});
-
-          // This is critical - update the stream to notify UI
-          _geminiStreamController.add(geminiResponse);
-        });
-
-        // Optional: Speak the response
-        _speakResponse(geminiResponse);
-      }
-    };
-  }
 
   Widget _buildRequestCard() {
     if (!_hasActiveRequest) return const SizedBox.shrink();
@@ -5446,5 +5352,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
     
     return null;
+  }
+
+  // Add the missing _lockCameraPosition method
+  void _lockCameraPosition(bool lock) {
+    setState(() {
+      _cameraLocked = lock;
+    });
+    print("Camera position ${lock ? 'locked' : 'unlocked'}");
   }
 }
