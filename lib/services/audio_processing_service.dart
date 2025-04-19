@@ -21,7 +21,8 @@ class AudioProcessingService {
   static const int PRE_SPEECH_SILENCE_COUNT = 100;
   static const int POST_SPEECH_SILENCE_COUNT = 10;
 
-  static const String SERVER_URL = 'http://10.171.64.167:8000/upload/';
+  static const String BASE_URL = 'https://b6a5-103-18-0-17.ngrok-free.app';
+  static const String SERVER_URL = '$BASE_URL/upload/';
 
   // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
