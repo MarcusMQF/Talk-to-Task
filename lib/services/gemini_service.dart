@@ -147,6 +147,7 @@ Recent Driver Activity:
     String? tripDistance,
     String? estimatedPickupTime,
     String? estimatedTripDuration,
+    
   }) {
     _isOnline = isOnline;
     _hasActiveRequest = hasActiveRequest;

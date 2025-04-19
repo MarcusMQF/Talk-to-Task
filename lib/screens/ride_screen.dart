@@ -4,6 +4,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:async';
 import 'package:flutter/physics.dart';
 import 'package:talk_to_task/services/audio_processing_service.dart';
+import 'package:talk_to_task/services/gemini_service.dart';
 import '../constants/app_theme.dart';
 import '../constants/map_styles.dart';
 import '../providers/voice_assistant_provider.dart';
@@ -58,7 +59,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Google Maps controller
   GoogleMapController? _mapController;
   bool _mapInitialized = false; // Track if map has been initially centered
-
+  List<Map<String, String>> _sessionConversationHistory = [];
+  bool _isInConversationSession = false;
   // Initial camera position (example coordinates - should be replaced with actual pickup location)
   static const LatLng _initialPosition =
       LatLng(3.1390, 101.6869); // KL coordinates
@@ -87,7 +89,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   final AudioProcessingService audioProcessingService =
       AudioProcessingService();
   final DeviceInfoService _deviceInfo = DeviceInfoService();
-
+  final GeminiService _geminiService = GeminiService();
   String _transcription = "Press the mic to start speaking.";
   String _geminiResponse = "";
   final StreamController<String> _geminiStreamController =
@@ -152,6 +154,32 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _setupLocationUpdates();
     _setupWeatherUpdates();
 
+    _isMapLoading = true;
+    // Add this near the start of your initState
+    // Pass the initial online status to GeminiService
+    _geminiService.updatePromptContext(
+      isOnline: _isOnline,
+      hasActiveRequest: _hasActiveRequest,
+    );
+    // Add a timeout to prevent getting stuck forever
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _isMapLoading) {
+        setState(() {
+          _isMapLoading = false;
+          print("Location timeout - proceeding without location");
+        });
+      }
+    });
+
+    // Call synchronously to ensure it runs immediately
+    _initializeLocation().then((_) {
+      if (mounted) {
+        setState(() {
+          _isMapLoading = false;
+        });
+      }
+    });
+
     // Add this callback to handle transcription completion
     audioProcessingService.onTranscriptionComplete =
         (String baseText, String fineTunedText, String geminiResponse) {
@@ -159,15 +187,38 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         setState(() {
           _geminiResponse = geminiResponse;
           _isProcessing = false;
+          // Store this exchange in the current conversation history
+          _sessionConversationHistory
+              .add({'user': fineTunedText, 'assistant': geminiResponse});
 
           // This is critical - update the stream to notify UI
           _geminiStreamController.add(geminiResponse);
         });
 
         // Optional: Speak the response
-        _speakResponse(geminiResponse);
+        _speakResponse(geminiResponse).then((_) {
+          _startNextRecordingAfterResponse();
+        });
       }
     };
+
+    String _generateSessionContext() {
+      if (_sessionConversationHistory.isEmpty) {
+        return "";
+      }
+
+      StringBuffer context =
+          StringBuffer("Previous messages in our conversation:\n");
+
+      for (int i = 0; i < _sessionConversationHistory.length; i++) {
+        context.writeln("User: ${_sessionConversationHistory[i]['user']}");
+        context.writeln(
+            "Assistant: ${_sessionConversationHistory[i]['assistant']}\n");
+      }
+
+      return context.toString();
+    }
+
     // Position voice button in bottom right after layout is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _positionVoiceButtonBottomRight();
@@ -243,6 +294,56 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     setState(() {
       _isSpeaking = false;
     });
+  }
+
+// Add this method to your _RideScreenState class
+  void _startNextRecordingAfterResponse() async {
+    // Short delay before starting new recording to allow user to process response
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (!mounted) return;
+
+    // Make sure speech has stopped before recording
+    if (_isSpeaking) {
+      await _flutterTts.stop();
+    }
+
+    // Reset states for new recording
+    setState(() {
+      _isRecording = true;
+      _isProcessing = false;
+      _hasDetectedSpeech = false;
+      _silenceCount = 0;
+      _silenceDuration = 20; // Use 20 instead of PRE_SPEECH_SILENCE_COUNT (100)
+      _lastAmplitude = -30.0;
+      _currentAmplitude = -30.0;
+      _transcription = "Listening for follow-up question...";
+    });
+
+    try {
+      final path = await _getTempFilePath();
+      print('Recording path: $path');
+
+      // Start recording with optimized settings
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          bitRate: 768000,
+          sampleRate: 48000,
+          numChannels: 2,
+        ),
+        path: path,
+      );
+
+      print('Auto-recording started after response, with silence count = 20');
+      _startAmplitudeMonitoring();
+    } catch (e) {
+      print("Error starting auto-recording: $e");
+      setState(() {
+        _isRecording = false;
+        _transcription = "Error: Failed to restart recording";
+      });
+    }
   }
 
   @override
@@ -665,6 +766,13 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   void _showNewRequest() {
     setState(() {
       _hasActiveRequest = true;
+
+      // Add this line
+      _geminiService.updatePromptContext(
+        isOnline: _isOnline,
+        hasActiveRequest: _hasActiveRequest,
+      );
+
       _requestCardController.forward(from: 0.0);
       _startRequestTimer();
     });
@@ -677,6 +785,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         if (mounted) {
           setState(() {
             _hasActiveRequest = false;
+
+            // Add this line
+            _geminiService.updatePromptContext(
+              isOnline: _isOnline,
+              hasActiveRequest: _hasActiveRequest,
+            );
           });
         }
       });
@@ -690,6 +804,11 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // AI STATUS INDICATOR - This comment helps the AI know the driver's status
       // Driver is currently: ${_isOnline ? "ONLINE" : "OFFLINE"}
+
+      _geminiService.updatePromptContext(
+        isOnline: _isOnline,
+        hasActiveRequest: _hasActiveRequest,
+      );
 
       if (_isOnline) {
         // Going online - show request card with animation
@@ -706,95 +825,78 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _initializeLocation() async {
-    // Check location permissions and settings
-    bool serviceEnabled;
-    PermissionStatus permissionGranted;
-
-    // Ensure location service is enabled
-    serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) {
-        setState(() {
-          _isMapLoading =
-              false; // Stop loading indicator if service is disabled
-        });
-        return;
-      }
-    }
-
-    // Request location permission if needed
-    permissionGranted = await _location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await _location.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) {
-        setState(() {
-          _isMapLoading =
-              false; // Stop loading indicator if permission is denied
-        });
-        return;
-      }
-    }
-
-    // Configure location for better accuracy
-    await _location.changeSettings(
-      accuracy: LocationAccuracy.high,
-      interval: 5000, // Update every 5 seconds
-      distanceFilter: 3, // Update when moved 3 meters
-    );
-
     try {
-      // Get initial location immediately
-      final locationData = await _location.getLocation();
+      print("Starting location initialization...");
 
-      setState(() {
-        _currentPosition = locationData;
-
-        // Update driver marker as soon as we have a location
-        if (_currentPosition != null) {
-          _updateDriverLocationMarker();
-        }
-      });
-
-      // Try to get the country name
-      if (_currentPosition != null) {
-        try {
-          final placemarks = await geocoding.placemarkFromCoordinates(
-            _currentPosition!.latitude!,
-            _currentPosition!.longitude!,
-          );
-
-          if (placemarks.isNotEmpty) {
-            setState(() {
-              final rawCountry = placemarks.first.country ?? "Unknown";
-
-              final countryMapping = {
-                'Malaysia': 'Malaysia',
-                'Singapore': 'Singapore',
-                'Thailand': 'Thailand',
-                'Indonesia': 'Indonesia',
-              };
-
-              _country = countryMapping[rawCountry] ?? rawCountry;
-              print('Country detected: $_country');
-            });
-          }
-        } catch (e) {
-          print('Error getting country: $e');
+      // First check if service is enabled
+      bool serviceEnabled = await _location.serviceEnabled();
+      if (!serviceEnabled) {
+        print("Location service disabled, requesting...");
+        serviceEnabled = await _location.requestService();
+        if (!serviceEnabled) {
+          print("User denied location service");
+          return;
         }
       }
 
-      // Also update distance information
-      _updateDistanceInformation();
+      // Now check permission
+      var permissionStatus = await _location.hasPermission();
+      if (permissionStatus == PermissionStatus.denied ||
+          permissionStatus == PermissionStatus.deniedForever) {
+        print("Location permission denied, requesting...");
+        permissionStatus = await _location.requestPermission();
+        if (permissionStatus != PermissionStatus.granted) {
+          print("User denied location permission");
+          return;
+        }
+      }
 
-      // Stop loading indicator
-      setState(() {
-        _isMapLoading = false;
-      });
+      // Configure location settings with more conservative values
+      await _location.changeSettings(
+        accuracy: LocationAccuracy.balanced, // Use balanced instead of high
+        interval: 10000, // 10 seconds
+        distanceFilter: 10, // 10 meters
+      );
+
+      // Get current location
+      print("Getting current location...");
+      _currentPosition = await _location.getLocation().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          print("Location timeout - using default location");
+          return LocationData.fromMap({
+            "latitude": 3.1390,
+            "longitude": 101.6869,
+            "accuracy": 0.0,
+            "altitude": 0.0,
+            "speed": 0.0,
+            "speed_accuracy": 0.0,
+            "heading": 0.0,
+          });
+        },
+      );
+
+      print(
+          "Location obtained: ${_currentPosition?.latitude}, ${_currentPosition?.longitude}");
+
+      // Update driver marker with current location
+      if (_currentPosition != null) {
+        _updateDriverLocationMarker();
+      }
+
+      // Start location updates
+      _setupLocationUpdates();
     } catch (e) {
-      print('Error getting initial location: $e');
-      setState(() {
-        _isMapLoading = false;
+      print("Error initializing location: $e");
+      // Use a default location if there's an error
+      _currentPosition = LocationData.fromMap({
+        "latitude": 3.1390,
+        "longitude": 101.6869,
+        "accuracy": 0.0,
+        "altitude": 0.0,
+        "speed": 0.0,
+        "speed_accuracy": 0.0,
+        "heading": 0.0,
       });
     }
   }
@@ -857,6 +959,23 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
+  String _generateSessionContext() {
+    if (_sessionConversationHistory.isEmpty) {
+      return "";
+    }
+
+    StringBuffer context =
+        StringBuffer("Previous messages in our conversation:\n");
+
+    for (int i = 0; i < _sessionConversationHistory.length; i++) {
+      context.writeln("User: ${_sessionConversationHistory[i]['user']}");
+      context.writeln(
+          "Assistant: ${_sessionConversationHistory[i]['assistant']}\n");
+    }
+
+    return context.toString();
+  }
+
 // In your _stopAndSendRecording() method:
   Future<void> _stopAndSendRecording() async {
     try {
@@ -864,13 +983,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       _silenceTimer?.cancel();
 
       final path = await _recorder.stop();
-
-      // Set processing state BEFORE the setState call to ensure UI update
       _isProcessing = true;
       _isRecording = false;
 
       setState(() {
-        // Use the variables already set above
         _transcription = "Processing audio...";
       });
 
@@ -890,11 +1006,15 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         throw Exception('Recording file is empty');
       }
 
-      // Add the print statement to verify the state
-      print('Processing state before API call: $_isProcessing');
+      // Get the session context
+      final sessionContext = _generateSessionContext();
+      print('Session context length: ${sessionContext.length} characters');
 
-      // Upload audio and wait for response
-      await audioProcessingService.uploadAudio(file);
+      // Upload audio with context from current session
+      await audioProcessingService.uploadAudio(
+        file,
+        conversationContext: sessionContext,
+      );
     } catch (e) {
       print('Error in _stopAndSendRecording: $e');
       setState(() {
@@ -1163,29 +1283,23 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> abortRecord() async {
+  void abortRecord() async {
     try {
       print('\n=== Aborting Recording ===');
       await _stopSpeaking();
-      // Cancel the amplitude timer to prevent memory leaks
       _amplitudeTimer?.cancel();
       _amplitudeTimer = null;
 
-      // Stop the recording ONLY ONCE (remove the redundant code)
       if (_isRecording) {
         final path = await _recorder.stop();
-
-        // Delete the recorded file
-        if (path != null) {
-          final file = File(path);
-          if (await file.exists()) {
-            await file.delete();
-            print('Recording file deleted: $path');
-          }
-        }
+        // Delete the recorded file...
       }
 
-      // Reset all states
+      // Reset conversation session state
+      _isInConversationSession = false;
+      _sessionConversationHistory = [];
+      print("Conversation session ended, context cleared");
+
       setState(() {
         _isRecording = false;
         _isProcessing = false;
@@ -1197,6 +1311,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
     } catch (e) {
       print('Error in abortRecord: $e');
+      // Reset conversation session anyway
+      _isInConversationSession = false;
+      _sessionConversationHistory = [];
+
       setState(() {
         _isRecording = false;
         _isProcessing = false;
@@ -2142,6 +2260,54 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         return Scaffold(
           body: Stack(
             children: [
+              if (_isMapLoading)
+                Container(
+                  color: themeProvider.isDarkMode
+                      ? Colors.black.withOpacity(0.6)
+                      : Colors.white.withOpacity(0.6),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Getting your location...',
+                          style: TextStyle(
+                            color: themeProvider.isDarkMode
+                                ? Colors.white
+                                : Colors.black,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Permission status: ${_currentPosition == null ? "Waiting" : "Granted"}',
+                          style: TextStyle(
+                            color: themeProvider.isDarkMode
+                                ? Colors.grey[300]
+                                : Colors.grey[700],
+                            fontSize: 12,
+                          ),
+                        ),
+                        // Add a manual button to proceed if location is stuck
+                        const SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              _isMapLoading = false;
+                            });
+                          },
+                          child: const Text("Continue Anyway"),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
               GoogleMap(
                 initialCameraPosition: const CameraPosition(
                   target: _initialPosition,
@@ -2194,7 +2360,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(AppTheme.grabGreen),
                         ),
                         const SizedBox(height: 16),
                         Text(
@@ -2391,6 +2558,16 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   Widget _buildVoiceModal(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
+    // Reset conversation history when modal first opens
+    if (!_isInConversationSession) {
+      _sessionConversationHistory = [];
+      _isInConversationSession = true;
+      print("Starting new conversation session");
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _speakResponse("I am listening");
+      });
+    }
     print(
         'Building voice modal: isRecording=$_isRecording, isProcessing=$_isProcessing');
 
@@ -2698,71 +2875,24 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
 
-  // Add this new method to set up periodic location updates
   void _setupLocationUpdates() {
-    // Variables to track significant location change
-    double lastLat = 0;
-    double lastLng = 0;
-    bool isFirstUpdate = true;
-
-    // Set up location change listener
-    _location.onLocationChanged.listen((LocationData currentLocation) {
-      if (mounted) {
-        setState(() {
-          _currentPosition = currentLocation;
-        });
-
-        // Always update driver marker on position changes
-        _updateDriverLocationMarker();
-
-        // If map hasn't been initialized yet, center on driver
-        if (_mapController != null &&
-            !_mapInitialized &&
-            _currentPosition != null) {
-          _centerMapOnDriverPosition();
-          _mapInitialized = true;
-        }
-
-        // Check if location has changed significantly (more than 500 meters)
-        // or if it's the first update
-        final currentLat = currentLocation.latitude!;
-        final currentLng = currentLocation.longitude!;
-
-        if (isFirstUpdate ||
-            calculateDistance(lastLat, lastLng, currentLat, currentLng) > 0.5) {
-          // Update last position
-          lastLat = currentLat;
-          lastLng = currentLng;
-          isFirstUpdate = false;
-
-          // Fetch weather for new location
-          _fetchWeatherData();
-        }
-
-        // Calculate distance to pickup if navigating to pickup
-        if (_isNavigatingToPickup && _pickupLocationMarker != null) {
-          // Calculate distance between driver and pickup point
-          final driverLat = _currentPosition!.latitude!;
-          final driverLng = _currentPosition!.longitude!;
-          final pickupLat = _pickupLocationMarker!.position.latitude;
-          final pickupLng = _pickupLocationMarker!.position.longitude;
-
-          // Simple distance calculation (not taking into account roads)
-          final distance =
-              calculateDistance(driverLat, driverLng, pickupLat, pickupLng);
-
+    // Add error handling for location updates
+    try {
+      _location.onLocationChanged.listen((LocationData currentLocation) {
+        if (mounted) {
           setState(() {
-            _driverToPickupDistance = "${distance.toStringAsFixed(1)} km";
-
-            // If driver is very close to pickup point, show pickup confirmation
-            if (distance < 0.1 && !_hasPickedUpPassenger) {
-              // Within 100 meters
-              _showPickupConfirmation();
-            }
+            _currentPosition = currentLocation;
           });
+
+          // Update driver marker
+          _updateDriverLocationMarker();
         }
-      }
-    });
+      }, onError: (e) {
+        print("Location update error: $e");
+      });
+    } catch (e) {
+      print("Error setting up location updates: $e");
+    }
   }
 
 // Helper method to calculate distance between two points
@@ -2796,6 +2926,18 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _isNavigatingToDestination = false;
         _hasPickedUpPassenger = false;
         _currentNavigationStep = 0;
+
+        _geminiService.updatePromptContext(
+          isOnline: _isOnline,
+          hasActiveRequest: false,
+          pickupLocation: _pickupLocation,
+          destination: _destination,
+          paymentMethod: _paymentMethod,
+          fareAmount: _fareAmount,
+          tripDistance: _tripDistance,
+          estimatedPickupTime: _estimatedPickupTime,
+          estimatedTripDuration: _estimatedTripDuration,
+        );
       });
 
       // Speak confirmation of accepting the order

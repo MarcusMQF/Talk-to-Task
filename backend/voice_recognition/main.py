@@ -91,7 +91,7 @@ class FasterWhisperHandler:
         try:
             model_id = self.config["model_id"]
             self.model = WhisperModel(
-                "small",
+                "large-v3",
                 device=self.device,
                 compute_type=self.compute_type,
                 download_root=str(self.cache_dir)

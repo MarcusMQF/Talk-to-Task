@@ -46,9 +46,6 @@ class AudioProcessingService {
   Function(String baseText, String enhancedText, String geminiResponse)?
       onTranscriptionComplete;
 
-
-
-
   // Constructor
   AudioProcessingService() {
     // Initialize in the background with better error handling
@@ -277,7 +274,7 @@ class AudioProcessingService {
     }
   }
 
-  Future<void> uploadAudio(File file) async {
+  Future<void> uploadAudio(File file, {String? conversationContext}) async {
     try {
       _isProcessing = true;
 
@@ -292,6 +289,20 @@ class AudioProcessingService {
           '📦 Audio size: ${(audioData.length / 1024).toStringAsFixed(2)} KB');
 
       final request = http.MultipartRequest('POST', Uri.parse(SERVER_URL));
+      final deviceContext = await _deviceInfo.getDeviceContext();
+      final country = deviceContext['location'] ?? "Malaysia"; // Default to Malaysia if location fails
+      final stopwatch = Stopwatch()..start();
+
+      // Add conversation context if provided
+      if (conversationContext != null && conversationContext.isNotEmpty) {
+        request.fields['conversation_context'] = conversationContext;
+        print(
+            '📝 Adding conversation context (${conversationContext.length} chars)');
+      }
+
+      // Add the existing fields
+      request.fields['country'] = country ?? 'Malaysia';
+      request.fields['device_context'] = json.encode(deviceContext);
 
       // Check if processing has been cancelled
       if (!_isProcessing) {
@@ -309,12 +320,6 @@ class AudioProcessingService {
         ),
       );
 
-      // Get device context for country
-      Map<String, dynamic> deviceContext =
-          await _deviceInfo.getDeviceContext(needLocation: true);
-      final country = deviceContext['location'] ??
-          "Malaysia"; // Default to Malaysia if location fails
-
       print('📍 Using country: $country');
       request.fields['country'] = country;
 
@@ -323,7 +328,6 @@ class AudioProcessingService {
         print('  - $key: $value');
       });
 
-      final stopwatch = Stopwatch()..start();
       print('📤 Sending request to backend...');
       final response = await request.send().timeout(
         const Duration(seconds: 20),
