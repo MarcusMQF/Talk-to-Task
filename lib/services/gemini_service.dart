@@ -8,7 +8,7 @@ class GeminiService {
   // Added context variables for prompts
   bool _isOnline = true;
   bool _hasActiveRequest = false;
-  Map<String, String?> _rideContext = {};
+  final Map<String, String?> _rideContext = {};
 
   GeminiService() {
     _model = GenerativeModel(
@@ -244,26 +244,6 @@ Recent Driver Activity:
         'confidence': 0.85
       };
 
-      /* COMMENTED OUT REAL IMPLEMENTATION - RESTORE WHEN API IS WORKING
-    // Make sure to use the correct API endpoint
-    final response = await http.post(
-      Uri.parse('https://your-backend-url/api/evaluate-ride'),  // Verify this URL is correct
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(rideDetails),
-    );
-
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      print('Failed to evaluate ride: ${response.statusCode}');
-      // Return a fallback response instead of throwing an exception
-      return {
-        'recommendation': 'ask_user',
-        'action': 'ask_user',
-        'explanation': 'I couldn\'t analyze this ride. Would you like to accept it?'
-      };
-    }
-    */
     } catch (e) {
       print('Error evaluating ride: $e');
       // Return a fallback response

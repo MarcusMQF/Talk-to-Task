@@ -15,12 +15,19 @@ from transformers.models.whisper import tokenization_whisper
 import time
 import soundfile as sf
 import numpy as np
-import noisereduce as nr
 import subprocess
 import shutil
-from df.enhance import enhance, init_df, load_audio, save_audio
+import json
 from pystoi import stoi
-import librosa.feature
+# from gemini_agents import app as gemini_app
+from df.enhance import enhance, init_df, load_audio, save_audio
+from typing import Optional
+
+# gemini_app.mount("/gemini", gemini_app)
+
+
+# Define this global variable
+multi_agent_system = None
 
 # Add this for Malaysian model
 tokenization_whisper.TASK_IDS = ["translate", "transcribe", "transcribeprecise"]
@@ -291,8 +298,16 @@ def optimize_gpu_memory():
 @app.on_event("startup")
 async def startup_event():
     """Initialize models when the FastAPI app starts"""
+    global multi_agent_system
+    
+    # Initialize existing models
     optimize_gpu_memory()
     await initialize_models()
+    
+    # Initialize the multi-agent system
+    print("Initializing Gemini multi-agent system...")
+    # multi_agent_system = MultiAgentSystem()
+    print("Multi-agent system initialized successfully")
 
 async def transcribe_with_base_model(file_path: str):
     """Transcribe audio using the faster-whisper model"""
@@ -596,7 +611,9 @@ class AudioDenoiser:
 @app.post("/upload/")
 async def upload_and_process_audio(
     file: UploadFile = File(...),
-    country: str = Form(None)
+    country: str = Form(None),
+    ride_context: str = Form(None),
+    conversation_context: str = Form(None)
 ):
     """Process uploaded audio: denoise and transcribe in one endpoint"""
     request_id = f"req_{int(time.time())}_{os.urandom(4).hex()}"
@@ -697,6 +714,35 @@ async def upload_and_process_audio(
             print(f"Request {request_id}: Fine-tuned model result: {fine_tuned_result}")
             stages["complete"] = True
             
+
+            if conversation_context and multi_agent_system and stages["transcribed"]:
+                try:
+                    # Use the fine-tuned result if available, otherwise use base result
+                    transcript_text = fine_tuned_result or base_result
+                    
+                    # Parse context
+                    ride_context_dict = json.loads(ride_context) if ride_context else {}
+                    
+                    # Process with multi-agent system
+                    agent_response = await multi_agent_system.process_query(
+                        transcript_text,
+                        ride_context=ride_context_dict,
+                        current_location=None  # You could extract this from context if needed
+                    )
+                    
+                    # Add agent response to the output
+                    response_data["agent_response"] = {
+                        "content": agent_response.content,
+                        "agent_type": agent_response.agent_type,
+                        "agent_name": agent_response.agent_name,
+                        "metadata": agent_response.metadata
+                    }
+                except Exception as e:
+                    print(f"Error processing with multi-agent system: {str(e)}")
+                    response_data["agent_response"] = {
+                        "error": "Failed to get agent response",
+                        "message": str(e)
+                    }
             return JSONResponse(
                 content=jsonable_encoder(response_data),
                 headers={"Content-Type": "application/json; charset=utf-8"}
@@ -759,3 +805,51 @@ async def echo_test(file: UploadFile = File(...)):
     content = await file.read()
     size = len(content)
     return {"received_bytes": size, "status": "ok"}
+
+@app.post("/gemini_agent/evaluate_ride/")
+async def evaluate_ride(
+    audio: UploadFile = File(...),
+    ride_context: str = Form(...),
+    conversation_context: Optional[str] = Form(None)
+):
+    """Specialized endpoint to evaluate ride requests"""
+    global multi_agent_system
+    request_id = f"ride_{int(time.time())}_{os.urandom(4).hex()}"
+
+    # FIX: Parse ride_context string to dict
+    ride_details = json.loads(ride_context)
+
+    print(f"\n=== REQUEST {request_id} - Ride Evaluation ===")
+    print(f"Ride details: {ride_details}")
+
+    try:
+        start_time = time.time()
+        response = await multi_agent_system.evaluate_ride_request(ride_details)
+        elapsed_time = time.time() - start_time
+
+        # Extract recommendation (ACCEPT or DECLINE) from response
+        content = response.content.strip()
+        recommendation = "ACCEPT" if "ACCEPT" in content.upper() else "DECLINE" if "DECLINE" in content.upper() else "UNDECIDED"
+
+        print(f"Recommendation: {recommendation}")
+        print(f"Response time: {elapsed_time:.2f}s")
+        print(f"Response: {content[:100]}...")
+
+        return JSONResponse(
+            content=jsonable_encoder({
+                "recommendation": recommendation,
+                "explanation": content,
+                "agent_name": response.agent_name,
+                "processing_time": f"{elapsed_time:.2f} seconds",
+                "request_id": request_id
+            }),
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+    except Exception as e:
+        print(f"Error evaluating ride request: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Server error", "message": str(e), "request_id": request_id}
+        )
