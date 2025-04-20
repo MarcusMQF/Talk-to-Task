@@ -349,11 +349,10 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
     } else {
       _voiceRetryCount = 0;
-      _speakResponse("No valid response detected. Declining the ride.").then((_) {
-        if (mounted) {
-          _dismissRequest();
-        }
-      });
+      // Remove the TTS message about declining the ride
+      if (mounted) {
+        _dismissRequest();
+      }
     }
   }
 }
@@ -362,7 +361,26 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     } catch (e) {
       print('Error in _stopRideResponseRecordingAndProcess: $e');
       _isProcessing = false;
-      _speakResponse("Sorry, there was an error processing your response.");
+      // Remove error message speech and silently dismiss the request instead
+      if (mounted) {
+        _dismissRequest();
+        
+        // Show a subtle notification instead
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not process response'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        
+        // Schedule new request after a short delay
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted && _isOnline) {
+            _showNewRequest();
+          }
+        });
+      }
     }
 
     if (_voiceRetryCount < 0) {
@@ -376,12 +394,17 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
     } else {
       _voiceRetryCount = 0;
-      _speakResponse("No valid response detected. Declining the ride.")
-          .then((_) {
-        if (mounted) {
-          _dismissRequest();
-        }
-      });
+      // Remove the TTS message about declining the ride and just silently dismiss
+      if (mounted) {
+        _dismissRequest();
+        
+        // Schedule a new request after a short delay
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted && _isOnline) {
+            _showNewRequest();
+          }
+        });
+      }
     }
   }
 
@@ -882,20 +905,52 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
             }
             _timerShakeController.forward(from: 0.0);
           }
+          
+          // Print every 5 seconds to confirm timer is working
+          if (_remainingSeconds % 5 == 0) {
+            print("Request timer: $_remainingSeconds seconds remaining");
+          }
         } else {
-          // Time's up - animate the request card sliding out
-          _dismissRequest();
+          // Time's up - Cancel timer first
+          print("Request timer at 0 - auto-declining request");
           timer.cancel();
-
-          // Simulate new request after timeout
-          Future.delayed(const Duration(seconds: 2), () {
+          
+          // Show timeout dialog with "Ride auto-declined" TTS
+          _showTimeoutDialog();
+          
+          // Simulate new request after timeout - ensure it happens for all requests
+          Future.delayed(const Duration(seconds: 3), () {
             if (mounted && _isOnline) {
+              print("Showing new request after timeout");
               _showNewRequest();
             }
           });
         }
       });
     });
+  }
+  
+  // Add a method to handle timeout with appropriate dialog but no "Declining" TTS
+  void _showTimeoutDialog() {
+    // Explicitly stop any ongoing speech first to ensure TTS is heard
+    _stopSpeaking().then((_) {
+      // Use "Ride auto-declined" for the timeout scenario with higher priority
+      _speakResponse("Ride auto-declined.");
+      
+      // No dialog, just dismiss the request directly
+      _dismissRequest();
+      
+      // Show a red snackbar with "Ride auto-declined" text
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ride auto-declined'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.red,
+        ),
+      );
+    });
+    
+    // We don't need to schedule a new request here as it's already handled in _startRequestTimer
   }
 
   void _showNewRequest() {
@@ -1097,10 +1152,19 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         // Going online - show request card with animation after a short delay
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted && _isOnline) {
+            print("Showing initial ride request when going online");
             // Make sure we're starting from a known state
             _hasActiveRequest = false;
             // Show new request with fresh animation and timer
             _updateRideRequestState(true);
+            
+            // Ensure the ride announcement happens
+            print("Ensuring ride announcement for first request");
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && _isOnline && _hasActiveRequest) {
+                _announceNewRideRequest();
+              }
+            });
           }
         });
       } else {
