@@ -164,6 +164,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _initializeTts();
     _setupWeatherUpdates();
     _getInitialLocation();
+    _fetchWeatherData(); // Add explicit call here
     _isMapLoading = true;
     // Add this near the start of your initState
     // Pass the initial online status to GeminiService
@@ -970,7 +971,33 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
       // Start a fresh timer
       _startRequestTimer();
+      
+      // Adjust map camera position for better view of the ride request
+      _adjustMapForRideRequest();
     });
+  }
+  
+  // Add this new method to adjust map position for ride request
+  void _adjustMapForRideRequest() {
+    if (_mapController != null && _currentPosition != null) {
+      // Offset latitude by -0.005 (move camera south) and set zoom to 16
+      final adjustedPosition = LatLng(
+        _currentPosition!.latitude! - 0.005, 
+        _currentPosition!.longitude!
+      );
+      
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: adjustedPosition,
+            zoom: 16.0,
+            bearing: 0.0,
+          ),
+        ),
+      );
+      
+      print("Map camera adjusted for ride request view");
+    }
   }
 
   void _dismissRequest() {
@@ -1549,6 +1576,12 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   void _centerMapOnDriverPosition() {
     if (_mapController == null || _currentPosition == null) return;
+    
+    // Don't center the map if camera is locked
+    if (_cameraLocked) {
+      print("Camera position locked - not centering map");
+      return;
+    }
 
     final driverPosition =
         LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
@@ -1848,9 +1881,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       });
 
       // Start amplitude monitoring to detect speech end
-      audioProcessingService.startRideResponseAmplitudeMonitoring(() {
-        _stopRideResponseRecordingAndProcess();
-      });
+      _startRideResponseAmplitudeMonitoring();
     } catch (e) {
       print('Error in _startVoiceResponseListener: $e');
       _isRecording = false;
@@ -4721,6 +4752,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Reset map bearing to north (0 degrees)
   Future<void> _resetMapBearing() async {
     if (_mapController != null) {
+      // Update driver location before resetting the map
+      await _updateDriverLocation();
+      
       // Convert LocationData to LatLng or use initial position
       final LatLng targetPosition =
           LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
@@ -4740,6 +4774,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
         _showCompassButton = false;
         _mapBearing = 0.0;
       });
+      
+      // Lock camera position after resetting bearing
+      _lockCameraPosition(true);
     }
   }
 
