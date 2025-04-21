@@ -16,7 +16,7 @@
 **Talk To Task** is a cutting-edge Flutter application designed to **revolutionize the ride-hailing driver experience not only in Malaysia,  but also in other countries where Grab operates, such as Singapore and Thailand** through advanced voice recognition and AI assistance. Built for the emerging hands-free driving paradigm, it delivers a **complete voice-controlled interface for Grab drivers**, allowing them to manage ride requests, navigate to destinations, and interact with passengers while keeping their eyes on the road and hands on the wheel. Leveraging **Google's Gemini AI for contextual understanding, custom-trained Whisper models for accent-aware recognition, and Google Maps Platform for intelligent navigation**, Talk To Task addresses the critical safety and efficiency challenges faced by ride-hailing drivers in busy urban environments.
 
 - **Key Features:** Hands-free ride management, wake-word activation, noise-cancelling voice processing, intelligent navigation, dark mode support, direct voice-to-action functionality, multilingual support
-- **Tech Stack:** Flutter, Dart, Google Maps, Gemini AI, Whisper AI, FastAPI, DeepFilterNet
+- **Tech Stack:** Flutter, Dart, Python, Google Maps, Gemini AI, Whisper AI, FastAPI, DeepFilterNet
 - **Purpose:** Enhance driver safety, increase ride efficiency, and create a more sustainable ride-hailing ecosystem
 
 ## ✨ Features
@@ -81,7 +81,7 @@ graph TD
 
 Our backend employs DeepFilterNet for noise suppression and OpenAI Whisper with custom Malaysian English fine-tuning to achieve remarkable audio processing capabilities in challenging environments.
 
-### DeepFilterNet Denoising Metrics
+### 📈 DeepFilterNet Denoising Metrics
 
 The system demonstrates strong performance with real-world noisy audio samples:
 
@@ -92,7 +92,7 @@ The system demonstrates strong performance with real-world noisy audio samples:
 | SNR Improvement | 2.10 dB | 1.5-3.0 dB | Signal-to-Noise Ratio enhancement |
 | Processing Time | 0.44s | 0.40-0.50s | Time required for denoising |
 
-### Transcription Accuracy
+### ☑️ Transcription Accuracy
 
 The dual-model approach ensures optimal transcription for both English and Malaysian language patterns:
 
@@ -103,20 +103,20 @@ The dual-model approach ensures optimal transcription for both English and Malay
 
 The system is optimized for in-vehicle use, capable of accurately capturing driver speech from within ~40 cm distance, even with typical road noise present. This precise distance optimization balances accessibility with noise rejection for real-world driving conditions.
 
-### Multilingual & Location-Aware Models
+### 📍 Multilingual & Location-Aware Models
 
 Our system automatically selects the appropriate language model based on the driver's geographical location:
 
 | Country | Model Variant | Supported Languages & Dialects |
 |---------|--------------|-------------------------------|
-| Malaysia | Malaysian | English, Bahasa Malaysia, Chinese, Tamil, mixed language sentences, regional accents |
+| Malaysia | Malaysian | English, Bahasa Malaysia, Chinese, Tamil, Mixed Language Sentences, Regional accents, Chinese Dialects|
 | Singapore | Singaporean | English, Mandarin, Malay, Tamil, Singlish |
-| Thailand | Thai | Thai, English, regional dialects |
-| Indonesia | Indonesian | Bahasa Indonesia, Javanese, English, regional dialects |
+| Thailand | Thai | Thai, English, Regional Dialects |
+| Indonesia | Indonesian | Bahasa Indonesia, Javanese, English, Regional Dialects |
 
 The Malaysian model excels at recognizing code-switching patterns common among Malaysian drivers, where sentences often combine multiple languages (e.g., "Saya nak pergi ke shopping mall dekat Bukit Bintang").
 
-### Meeting Evaluation Criteria
+### 🚩 Meeting Evaluation Criteria
 
 Our audio processing system was designed to address the unique challenges of voice recognition in ride-hailing environments:
 
@@ -138,9 +138,9 @@ Our audio processing system was designed to address the unique challenges of voi
 - **Our Solution**: Adaptive noise profiles with environment-specific processing parameters
 - **Performance**: Successfully maintains functionality across:
   - Heavy traffic conditions (80-90 dB)
-  - Rain and wind conditions (validated during monsoon season)
-  - Engine noise at various RPMs (tested across 5 vehicle types)
-  - Urban environment sounds (tested in KL, Penang, Johor Bahru)
+  - Rain and wind conditions (tested with the actual conditions)
+  - Engine noise at various RPMs (tested across multiple vehicle types)
+  - Urban environment sounds 
   - Multiple overlapping noise sources (e.g., construction + traffic)
 
 The system automatically adjusts its noise cancellation parameters based on detected environmental conditions, optimizing for the specific noise profile present at that moment.
