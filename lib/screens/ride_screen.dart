@@ -149,6 +149,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   // Add camera lock state
   bool _cameraLocked = false;
 
+  // Add a boolean flag to track if ride request mode is active
+  bool _isRideRequestActive = false;
+
   @override
   void initState() {
     super.initState();
@@ -953,6 +956,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
   void _showNewRequest() {
     setState(() {
       _hasActiveRequest = true;
+      _isRideRequestActive = true; // Set the ride request active flag
 
       // Add this line
       _geminiService.updatePromptContext(
@@ -977,7 +981,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     });
   }
   
-  // Add this new method to adjust map position for ride request
+  // Update the method to adjust map position for ride request
   void _adjustMapForRideRequest() {
     if (_mapController != null && _currentPosition != null) {
       // Offset latitude by -0.005 (move camera south) and set zoom to 16
@@ -1009,6 +1013,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _timerGlowController.reset();
     _timerShakeController.reset();
 
+    // Set ride request flag to false
+    _isRideRequestActive = false;
+
     // Make sure controller is initialized before animating
     if (!_requestCardController.isAnimating) {
       _requestCardController.reverse().then((_) {
@@ -1033,6 +1040,8 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       // If going offline, there cannot be active requests
       if (!_isOnline) {
         _hasActiveRequest = false;
+        _isRideRequestActive = false; // Ensure ride request mode is disabled when offline
+        
         if (_requestTimer != null) {
           _requestTimer!.cancel();
           _requestTimer = null;
@@ -1044,6 +1053,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       } else {
         // If online, we can set the active request as requested
         _hasActiveRequest = hasActiveRequest;
+        
+        // Also update the ride request active flag
+        _isRideRequestActive = hasActiveRequest;
 
         // Update UI based on new request state
         if (hasActiveRequest) {
@@ -1142,6 +1154,9 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
       } else {
         // Going offline - cancel any active requests
         _updateRideRequestState(false);
+        
+        // Make sure ride request mode is disabled when going offline
+        _isRideRequestActive = false;
       }
 
       // Update the Gemini prompt context with current online status
@@ -1845,7 +1860,7 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
     _flutterTts.speak("There's a new ride request. Would you like to accept?");
 
     // Calculate approximate duration for the speech
-    final speechDuration = const Duration(milliseconds: 2700);
+    const speechDuration = Duration(milliseconds: 2700);
 
     // Schedule voice listener to start after the speech should complete
     Future.delayed(speechDuration, () {
@@ -4674,16 +4689,27 @@ class _RideScreenState extends State<RideScreen> with TickerProviderStateMixin {
 
   void _moveToCurrentLocation() async {
     if (_mapController != null && _currentPosition != null) {
-      final driverPosition =
-          LatLng(_currentPosition!.latitude!, _currentPosition!.longitude!);
-
-      print(
-          "🎯 Explicitly moving to user location: ${driverPosition.latitude}, ${driverPosition.longitude}");
+      LatLng targetPosition;
+      
+      // Apply the same offset as ride request if in ride request mode
+      if (_isRideRequestActive) {
+        targetPosition = LatLng(
+          _currentPosition!.latitude! - 0.005,
+          _currentPosition!.longitude!
+        );
+        print("🎯 Moving to offset location (ride request active): ${targetPosition.latitude}, ${targetPosition.longitude}");
+      } else {
+        targetPosition = LatLng(
+          _currentPosition!.latitude!,
+          _currentPosition!.longitude!
+        );
+        print("🎯 Moving to exact user location: ${targetPosition.latitude}, ${targetPosition.longitude}");
+      }
 
       _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
-            target: driverPosition,
+            target: targetPosition,
             zoom: 16.0,
             bearing: 0.0,
           ),
